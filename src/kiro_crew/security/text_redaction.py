@@ -83,8 +83,40 @@ def redact(text: str) -> str:
 # it is a non-secret header string and the final full-text pass still redacts
 # the persisted/displayed copy.)
 _CRED_CLASS: frozenset[str] = frozenset(
-    string.ascii_letters + string.digits + "_-+/=.:@%~" + '"' + "'" + "?&#"
+    string.ascii_letters
+    + string.digits
+    + "_-+/=.:@%~"
+    + '"'
+    + "'"
+    + "?&#"
+    # A JSON escape, a control character and an invisible format character are
+    # characters the batch pass reads THROUGH (``redaction_normalise``), so one
+    # inside a token must not end its run either.
+    + "\\"
+    + "".join(chr(c) for c in range(0x20) if chr(c) not in "\t\n\r")
+    + "\x7f\u00ad\u200b\u200c\u200d\u2060\ufeff"
 )
+
+#: A terminal escape sequence ending at the cut: the batch pass drops it whole, so
+#: the trailing run continues through it.
+_CSI_TAIL_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]?\Z")
+#: How far back a CSI sequence ending at the cut is looked for.
+_CSI_REACH = 32
+
+
+def _natural_cut(buf: str) -> int:
+    """Start of the trailing run of credential-class characters, through escape sequences."""
+    cut = len(buf)
+    while cut > 0:
+        if buf[cut - 1] in _CRED_CLASS:
+            cut -= 1
+            continue
+        csi = _CSI_TAIL_RE.search(buf, max(0, cut - _CSI_REACH), cut)
+        if csi is None:
+            break
+        cut = csi.start()
+    return cut
+
 
 # Upper bound on withheld trailing characters. Larger than the longest
 # fixed-format credential so a split token is always rejoined before emission;
@@ -121,7 +153,35 @@ _STREAM_DISCARD_RUN_RES = {
     "jwt": re.compile(rf"(?:{_JWT_SEGMENT_VALUE_CLASS}|\.)*"),
     "bearer": re.compile(rf"{_BEARER_VALUE_CLASS}*"),
     "aws-keyed": re.compile(rf"{stream_aws_anchor.VALUE_CLASS}*"),
+    # A labelled quoted value past its hold reach: everything to its closing
+    # quote or the line end (escapes included), as the batch rule reads it.
+    "quoted-dq": re.compile(r'(?:[^"\\\n]|\\.)*'),
+    "quoted-sq": re.compile(r"(?:[^'\\\n]|\\.)*"),
+    # The same value inside an escaped string (``{\\"password\\": \\"...``): it
+    # ends at the escaped quote.
+    # One level deeper, the value's own escapes are doubled: ``\\\\\\\\`` is its
+    # escaped backslash, ``\\\\\\"`` its escaped quote, and the ``\\"`` left over
+    # is the quote that closes it.
+    "quoted-esc-dq": re.compile(r'(?:[^\\\n]|\\{4}|\\{3}"|\\{2}(?=[^"\\])|\\(?=[^"\\]))*'),
+    "quoted-esc-sq": re.compile(r"(?:[^\\\n]|\\{4}|\\{3}'|\\{2}(?=[^'\\])|\\(?=[^'\\]))*"),
+    # Opened by a percent-encoded quote: through the same encoded quote.
+    "quoted-pct-dq": re.compile(r"(?:(?!%22)[^%\n]|%(?!22))*(?:%22)?", re.IGNORECASE),
+    "quoted-pct-sq": re.compile(r"(?:(?!%27)[^%\n]|%(?!27))*(?:%27)?", re.IGNORECASE),
+    # Opened by a quote escaped more than once (a value three JSON levels deep):
+    # dropped to the line end, fail closed.
+    "quoted-line": re.compile(r"[^\n]*"),
+    # An unquoted value behind an encoded label: the label rules' value class.
+    "view-unquoted": re.compile(rf"{stream_aws_anchor.VALUE_CLASS}*"),
 }
+_QUOTED_DISCARD_KIND = {
+    "%22": "quoted-pct-dq",
+    "%27": "quoted-pct-sq",
+    '"': "quoted-dq",
+    "'": "quoted-sq",
+    '\\"': "quoted-esc-dq",
+    "\\'": "quoted-esc-sq",
+}
+
 # Bytes of terminator-less continuation dropped silently between two tags. It is
 # NOT an exit: at the bound the discard re-emits the tag, zeroes the counter and
 # keeps dropping, so the counter stays O(1) and a credential's continuation never
@@ -178,7 +238,8 @@ def _partial_jwt_tail(buf: str) -> re.Match[str] | None:
 # and stream its raw tail.
 _BEARER_ANCHOR_PARTIAL_RE = re.compile(
     r"""Authorization["']?\s*[:=]\s*["']?"""
-    rf"(?:Bearer(?:\s+{_BEARER_VALUE_CLASS}*)?|Beare|Bear|Bea|Be|B)?\Z",
+    rf"(?:(?:Bearer|Basic|Token)(?:\s+{_BEARER_VALUE_CLASS}*)?"
+    r"|Beare|Bear|Bea|Be|B|Basi|Bas|Ba|Toke|Tok|To|T)?\Z",
     re.IGNORECASE,
 )
 
@@ -210,11 +271,16 @@ def _aws_label_cut(buf: str, key_start: int) -> tuple[int, bool]:
     inside = False
     if key_start > 0:
         spans = []
-        for match in _submodule("redaction")._credential_matches(buf):
-            if match.start() >= key_start:
+        for start, end in _batch_spans(buf, with_labels=False):
+            if start >= key_start:
                 break
-            inside = inside or key_start < match.end()
-            spans.append(match.span())
+            inside = inside or key_start < end
+        # The cut never parts an earlier label from its value either: a closed
+        # ``"password": "<value>"`` before the key reaches the window whole.
+        for start, end in _batch_spans(buf, with_labels=True):
+            if start >= key_start:
+                break
+            spans.append((start, end))
         # Latest start first, so a span that crosses an earlier move is seen too.
         # A match can start mid-token, so each move walks back to whitespace
         # again: a bare secret glued in front of the match stays whole.
@@ -224,8 +290,47 @@ def _aws_label_cut(buf: str, key_start: int) -> tuple[int, bool]:
     return cut, inside
 
 
+def _batch_spans(buf: str, *, with_labels: bool) -> list[tuple[int, int]]:
+    """The batch pass's fixed-pattern matches and labelled values in *buf*, by start.
+
+    A labelled value spans from its label's start when *with_labels* (a cut must
+    not separate the two), else from the value's start (a key name inside a
+    VALUE is part of that credential, not a label of its own).
+    """
+    redaction = _submodule("redaction")
+    spans = [match.span() for match in redaction._credential_matches(buf)]
+    for span in redaction.label_spans(buf):
+        spans.append((span.start - len(span.label) if with_labels else span.start, span.end))
+    return sorted(spans)
+
+
+def _label_safe_cut(buf: str, cut: int) -> int:
+    """*cut*, moved back to the start of any labelled value (label included) it
+    falls inside, as the batch pass reads one on the text or its views."""
+    labels = _submodule("redaction_labels")
+    spans = [*_batch_spans(buf, with_labels=True), *labels.view_label_spans(buf)]
+    for start, end in sorted(spans, reverse=True):
+        if start < cut < end:
+            cut = _token_start(buf, start)
+    return cut
+
+
 def _token_start(buf: str, pos: int) -> int:
     while pos > 0 and not buf[pos - 1].isspace():
+        pos -= 1
+    return pos
+
+
+#: The longest word glued in front of a label (``aws_``, ``my-app.``).
+_LABEL_PREFIX_MAX = 96
+
+
+def _label_word_start(buf: str, pos: int) -> int:
+    """Where the word that ends in the label at *pos* starts: back over name
+    characters only, so compact JSON before it (a previous value, its quotes and
+    commas) never counts toward the label's hold."""
+    floor = max(0, pos - _LABEL_PREFIX_MAX)
+    while pos > floor and (buf[pos - 1].isalnum() or buf[pos - 1] in "_-."):
         pos -= 1
     return pos
 
@@ -298,7 +403,30 @@ class StreamRedactor:
                     return ""
             # The carried tail was counted on the pass that first dropped it.
             self._discarded += max(0, run - (len(self._buf) - len(chunk)))
-            if run == len(self._buf):
+            # A quoted value's lone trailing backslash opens an escape whose
+            # second half is still to come (``\\"`` inside the value, or the
+            # escaped quote that closes it): keep it in the drop.
+            tail = self._buf[run:]
+            escape_open = (
+                any(kind.startswith("quoted-") for kind in kinds)
+                and 0 < len(tail) <= 3
+                and tail == "\\" * len(tail)
+            )
+            pct = any(kind.startswith("quoted-pct") for kind in kinds)
+            # The run took the encoded quote that closes the value (the body
+            # never ends with one): the discard is over even at the buffer end.
+            closed = pct and self._buf[:run].endswith(("%22", "%27"))
+            if pct and not closed and run == len(self._buf):
+                # An encoded quote cut by the chunk (``%`` or ``%2``) may be the
+                # one that closes the value: keep it for the next pass.
+                partial = len(self._buf) - max(self._buf.rfind("%"), 0)
+                if self._buf.endswith(("%", "%2")) and partial <= 2:
+                    tail = self._buf[len(self._buf) - partial :]
+                    escape_open = True
+            if escape_open:
+                self._buf = tail
+                return ""
+            if run == len(self._buf) and not closed:
                 # Keep the tail still in the discard, so a label split across
                 # chunks is seen whole on the next pass.
                 carry = stream_aws_anchor.LABEL_CARRY if "aws-keyed" in kinds else 0
@@ -315,9 +443,12 @@ class StreamRedactor:
         # PHASE A -- SAFETY CUT.
         # Invariant: every candidate can only move the cut backward. Bytes before
         # the minimum do not bisect any known in-progress credential anchor.
-        natural_cut = len(self._buf)
-        while natural_cut > 0 and self._buf[natural_cut - 1] in _CRED_CLASS:
-            natural_cut -= 1
+        natural_cut = _natural_cut(self._buf)
+        if _submodule("redaction_labels").label_ends_near(self._buf, natural_cut):
+            # A cut right after a label (``Authorization: Bearer <token>'``, or
+            # one walked back through a terminal escape) would part the label
+            # from its value: never place it inside a labelled value.
+            natural_cut = _label_safe_cut(self._buf, natural_cut)
         partial_jwt = _partial_jwt_tail(self._buf)
         safety_cuts = [natural_cut]
 
@@ -382,6 +513,116 @@ class StreamRedactor:
                     # cut back into the run before it; release it as main does.
                     aws_keyed_anchor = None
 
+        # The context rules need more than the value in one batch call: a key ID
+        # beside a 40-character secret (either order), an AWS label written with
+        # no separator, a ``name``/``value`` pair. Hold from where such a match
+        # starts until its reach has arrived (``redaction_labels.stream_hold_start``).
+        # WEAK: it never raises the cap or arms a drop, and the reach is under the
+        # 512 floor.
+        context_hold = _submodule("redaction_labels").stream_hold_start(self._buf)
+        catalog_reach = False
+        # Beside an AWS-keyed anchor the hold still applies within the floor: a
+        # key ID before the label has its secret after it (``<ID> password=x
+        # <secret>``), so the cut takes the earlier of the two.
+        if context_hold is not None:
+            hold_cut = _token_start(self._buf, context_hold)
+            # Never hold from inside a labelled value: the cut would part the
+            # value from its label. Move it back to where that match starts.
+            # Nor from inside a key ID and its paired secret: the window that
+            # holds the secret must hold its key ID too, or it is released bare.
+            pairs: list[tuple[int, int]] = []
+            _submodule("redaction_labels").paired_secret_spans(self._buf, pairs)
+            # A vendor-catalog finding spans from its keyword, which the cut must
+            # not part from its value either (``snowflake token: <value>\n``).
+            catalog_spans = _submodule("secret_catalog").catalog_match_spans_near(
+                self._buf, hold_cut
+            )
+            # A label the batch pass reads only through escapes or terminal codes
+            # spans from that label too (``\x1b[33maws_secret_access_key\x1b[0m = ...``).
+            view_spans = _submodule("redaction_labels").view_label_spans(self._buf)
+            spans = [
+                *_batch_spans(self._buf, with_labels=True),
+                *pairs,
+                *catalog_spans,
+                *view_spans,
+            ]
+            for start, end in spans:
+                if start < hold_cut < end:
+                    hold_cut = _token_start(self._buf, start)
+            # A hold past the floor would only move the floor's cut; a STRONG
+            # anchor's cut already governs the buffer it is in. A vendor-catalog
+            # value or an STS session token still arriving is the exception: it
+            # is held as far as the long-token reach (``CATALOG_HOLD_REACH``).
+            if len(self._buf) - hold_cut <= _STREAM_HOLDBACK_MAX:
+                safety_cuts.append(hold_cut)
+            elif (
+                aws_keyed_anchor is None
+                and len(self._buf) - hold_cut <= _submodule("redaction_labels").CATALOG_HOLD_REACH
+                and _submodule("redaction_labels").long_token_start(self._buf) is not None
+            ):
+                safety_cuts.append(hold_cut)
+                catalog_reach = True
+        # A labelled quoted value is held to its closing quote, as far as the
+        # batch rule reads one: past the floor, but bounded (QUOTED_HOLD_REACH).
+        labels = _submodule("redaction_labels")
+        quoted_start = labels.open_quoted_start(self._buf)
+        quoted_reach = False
+        quoted_limit = labels.QUOTED_HOLD_REACH
+        if quoted_start is not None and aws_keyed_anchor is None and bearer_anchor is None:
+            quoted_cut = _label_word_start(self._buf, quoted_start)
+            quoted_limit = labels.quoted_hold_reach(self._buf, quoted_start)
+            if len(self._buf) - quoted_cut <= quoted_limit:
+                safety_cuts.append(quoted_cut)
+                quoted_reach = True
+
+        # An unquoted value behind a label written encoded (``password%3D<v>``)
+        # has no anchor on the text: held with its label like a quoted one, and
+        # past that reach dropped to its end, so its tail never streams bare.
+        if (
+            len(self._buf) > _STREAM_HOLDBACK_MAX
+            and not quoted_reach
+            and aws_keyed_anchor is None
+            and bearer_anchor is None
+        ):
+            # The whole held buffer: past the reach the label lies further back.
+            view_open = labels.open_view_value(self._buf, len(self._buf))
+            if view_open is not None:
+                view_cut = _label_word_start(self._buf, view_open[0])
+                if len(self._buf) - view_cut <= labels.QUOTED_VALUE_HOLD_REACH:
+                    safety_cuts.append(view_cut)
+                    quoted_reach = True
+                    quoted_limit = labels.QUOTED_VALUE_HOLD_REACH
+                else:
+                    commit, rest, self._buf = (
+                        self._buf[: view_open[1]],
+                        self._buf[view_open[1] :],
+                        "",
+                    )
+                    self._discarding = True
+                    self._discard_kind = ("view-unquoted",)
+                    self._discarded = 0
+                    out = self._redact_window(commit) if commit else ""
+                    return out + _redaction._REDACTED_CREDENTIAL_TAG + self.feed(rest)
+
+        # A labelled quoted value still open past its hold reach is never
+        # released: the text before it is committed, the value goes as one tag,
+        # and the rest of it is dropped through its closing quote (fail closed),
+        # so the stream matches the batch rule, which reads it whole.
+        # Before the long-token cap can drop from the label's token start: a
+        # label word glued in front (``aws_``) is at most 96 characters.
+        overrun = labels.overrun_quoted_value(self._buf, _STREAM_HOLDBACK_JWT_MAX - 96)
+        if overrun is not None and bearer_anchor is None:
+            value_start, quote = overrun
+            # The value so far goes through the discard itself, so an encoded
+            # quote or escape the chunk cut in half is carried to the next pass.
+            body = value_start + (len(quote) if quote.startswith("%") else 0)
+            commit, rest, self._buf = self._buf[:value_start], self._buf[body:], ""
+            self._discarding = True
+            self._discard_kind = (_QUOTED_DISCARD_KIND.get(quote, "quoted-line"),)
+            self._discarded = 0
+            out = self._redact_window(commit) if commit else ""
+            return out + _redaction._REDACTED_CREDENTIAL_TAG + self.feed(rest)
+
         # A token-name prefix without '=' is WEAK. It still needs a short
         # holdback so a chunk boundary cannot split the name, but it is not yet a
         # credential and must never escalate the cap or authorize data loss.
@@ -423,6 +664,10 @@ class StreamRedactor:
         # WEAK name prefixes never drop data. Any forced cut is repaired before
         # emission so it cannot strand an anchor-less token-value suffix.
         cap = _STREAM_HOLDBACK_MAX
+        if quoted_reach and not strong_anchored:
+            cap = max(cap, quoted_limit)
+        if catalog_reach and not strong_anchored:
+            cap = max(cap, labels.CATALOG_HOLD_REACH)
         if len(self._buf) - i > cap and strong_anchored:
             cap = _STREAM_HOLDBACK_JWT_MAX
         if len(self._buf) - i > cap:
@@ -536,9 +781,20 @@ class StreamRedactor:
             # split (a PEM hold can keep one buffered after its value ended):
             # its tail would stream with no label left to redact it.
             if aws_label_seen:
-                for match in _redaction._credential_matches(self._buf):
-                    if match.start() < i < match.end():
-                        i = match.end()
+                for start, end in _batch_spans(self._buf, with_labels=True):
+                    if start < i < end:
+                        i = end
+            # Any labelled value the floor would split, on the text or read
+            # through an encoding (``password%3D%27<value>%27``), once it has
+            # closed: the window takes it whole, or its tail streams label-less.
+            for start, end in sorted(
+                [
+                    *_batch_spans(self._buf, with_labels=True),
+                    *labels.view_label_spans(self._buf, labels.QUOTED_VALUE_HOLD_REACH),
+                ]
+            ):
+                if start < i < end < len(self._buf):
+                    i = end
 
             # Repair the complete-match cut first, then preserve a trailing WEAK
             # prefix if that repair crossed it. An encoded separator is at most

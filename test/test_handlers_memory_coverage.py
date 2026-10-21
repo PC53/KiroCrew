@@ -51,7 +51,7 @@ import kiro_crew.dashboard.handlers.memory as mem_mod
 
 _MOD = "kiro_crew.dashboard.handlers.memory"
 
-_CRED = "AKIAIOSFODNN7EXAMPLE"
+_CRED = "glpat-IOSFODNN7EXAMPLE"
 
 
 # ---------------------------------------------------------------------------
