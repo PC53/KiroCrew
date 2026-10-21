@@ -482,7 +482,11 @@ def _url_payload_command(n: int) -> str:
 #: (``169.254.169.$o`` in a loop is benign), so the gate adds no new over-block. This
 #: replaces an earlier presence-based attempt that was larger and over-blocked, so the
 #: package shrank here (prior head pinned 32,485).
-_PACKAGE_LINE_BUDGET = 32_438
+#:
+#: Raised again, from 32,438, for the ``-c`` operand that skips a redirect word, and the
+#: rm floor reading each nested-shell payload through the shared extractor and the
+#: shared data-consumer exemption. No pattern moved.
+_PACKAGE_LINE_BUDGET = 32_559
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

@@ -1,7 +1,8 @@
 """Recursive-force ``rm`` seatbelt behind the two ``local-destructive-rm-rf-*`` rows.
 
-Refuses the common respellings of ``rm -rf /`` and ``rm -rf ~`` the rows miss. A
-seatbelt, not a parser: other shell shapes stay with the rows and the OS sandbox.
+Refuses the common respellings of ``rm -rf /`` and ``rm -rf ~`` the rows miss, at the
+top level and in every nested-shell payload the shared walk finds. A seatbelt, not a
+parser: other shell shapes stay with the rows and the OS sandbox.
 """
 
 from __future__ import annotations
@@ -101,4 +102,91 @@ def _rm_wipe_targets(command: str) -> "set[str]":
                 force = force or "f" in arg
         if recursive and force:
             kinds |= {kind for arg in operands if (kind := _target_kind(arg))}
+    return kinds
+
+
+def _after_shell_verb(tokens: "list[str]", programs: "list[str]", index: int) -> bool:
+    """True when *tokens[index]* is the argument of ``eval`` / ``source`` / ``.``."""
+    before = index - 1
+    while before >= 0 and tokens[before] == "--":
+        before -= 1
+    if before < 0 or programs[before] != tokens[before]:
+        return False  # a redirect target named ``eval`` is a file, not the verb
+    verb = tokens[before]
+    return verb in _shell._NESTED_SHELL_VERBS or _shell._program_basename(verb) in (
+        _shell._NESTED_SHELL_VERBS
+    )
+
+
+def _command_lines(text: str) -> "list[str]":
+    """*text* cut at each live newline; a ``#`` comment's quotes open nothing."""
+    lines: list[str] = []
+    pos = 0
+    while pos <= len(text):
+        rest, cut, end = text[pos:], len(text), len(text)
+        for step in _shell._iter_shell_chars(rest):
+            if step.active and step.char == "#" and _shell._opens_comment(rest, step.offset):
+                newline = rest.find("\n", step.offset)  # the line ends before the comment
+                cut, end = pos + step.offset, len(text) if newline < 0 else pos + newline
+                break
+            if step.active and step.char == "\n":
+                cut = end = pos + step.offset
+                break
+        lines.append(text[pos:cut])
+        pos = end + 1
+    return lines
+
+
+def _rm_wipe_targets_nested(command: str) -> "set[str]":
+    """:func:`_rm_wipe_targets` over *command* and each nested-shell payload in it.
+
+    Payloads come from the shared ``_nested_shell_payloads`` and the shared data-consumer
+    exemption (``echo bash -c '...'`` prints), and each is read by this floor's own segment
+    scan. A payload is always shorter than its parent, so the walk ends. ``eval`` and
+    ``source`` payloads are not read: bash re-joins words under each ``eval``, which this
+    seatbelt does not model, so those stay with the rows and the OS sandbox.
+    """
+    kinds: set[str] = set()
+    pending, seen = [command], {command}
+    while pending:
+        source = pending.pop()
+        kinds |= _rm_wipe_targets(source)
+        # The tokenizer reads an unquoted newline as a space; bash ends the command there.
+        # Cut comments before folding: bash continues no line from inside a comment.
+        for line in _command_lines(source):
+            tokens = _shell._shell_tokens(_shell._fold_line_continuations(line))
+            payloads = _shell._nested_shell_payloads(tokens, allow_join=False)
+            if not payloads:
+                continue
+            programs = _shell._argv_programs(tokens)
+            disqualified = _shell._data_consumer_command_disqualified(tokens)
+            positions: dict[str, list[int]] = {}
+            for index, token in enumerate(tokens):
+                positions.setdefault(token, []).append(index)
+            text = "\0".join(tokens)
+            for payload in dict.fromkeys(payloads):
+                spots = positions.get(payload, [])
+                sole = text.count(payload) == len(spots)  # no glued carrier repeats it
+                if spots and sole and all(_after_shell_verb(tokens, programs, i) for i in spots):
+                    continue  # an ``eval`` / ``source`` argument
+                # A payload cut out of a glued word (``bash<<<'x'``, ``-c'x'``) may equal an
+                # inert ``echo`` argument too; it is exempt only if it occurs nowhere else.
+                if (
+                    spots
+                    and sole
+                    and all(
+                        _shell._data_consumer_exempt(
+                            i, payload, programs, tokens, command_disqualified=disqualified
+                        )
+                        for i in spots
+                    )
+                ):
+                    continue
+                # The tokenizer keeps ``\\$`` inside double quotes, where bash drops the
+                # backslash; reading it as ``$`` fails closed (a single-quoted ``\\$HOME``
+                # is then refused too).
+                payload = payload.replace("\\$", "$")
+                if len(payload) < len(source) and payload not in seen:
+                    seen.add(payload)
+                    pending.append(payload)
     return kinds
