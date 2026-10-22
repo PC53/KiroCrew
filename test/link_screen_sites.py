@@ -109,6 +109,7 @@ DECLARED_SITES = frozenset(
         ("connections/warm.py", "_read_warm_spec_body"),
         ("connections/warm.py", "_warm_spec_is_foreign"),
         ("crew_teams.py", "_has_document"),
+        ("crewmate_bundle_export.py", "bundled_skills"),
         ("cron_inflight.py", "_read_own_file"),
         ("cron_inflight.py", "_readable_running_dir"),
         ("dashboard/chat_tag_grants.py", "_quarantine_store"),
