@@ -964,6 +964,7 @@ from kiro_crew.dashboard.chat_utils import (  # noqa: E402, F401
     AUTOMATION_NOTICE_KIND,
     CONTEXT_OVERFLOW_KIND,
     CRON_NOTIFICATION_KIND,
+    DEFERRED_FOLLOWUP_NOTICE,
     EMPTY_RUNG_CONTINUE,
     EMPTY_RUNG_GIVE_UP,
     EMPTY_RUNG_REPLAY,
@@ -993,7 +994,9 @@ from kiro_crew.dashboard.chat_utils import (  # noqa: E402, F401
     EmptyTurnActivity,
     RecoveryPayload,
     app_inject_row,
+    background_wake_absent,
     classify_empty_turn,
+    has_deferred_followup_promise,
     has_leaked_tool_call,
     has_unfinished_progress_claim,
     is_false_current_tool_blocker,
@@ -1012,6 +1015,7 @@ from kiro_crew.dashboard.chat_utils import (  # noqa: E402, F401
     subagents_attached_async,
     synthesis_fire_verdict,
     tool_calls_are_read_only_preparation,
+    turn_armed_a_wake,
 )
 
 # Consumption contract carried inside every pending-context frame, between the
