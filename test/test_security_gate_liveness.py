@@ -470,7 +470,23 @@ def _url_payload_command(n: int) -> str:
 #: manifest line, its rule id and reason in ``denied_rules_tables``, its ``deny_gate``
 #: registration, its facade export, and its name in the ungated-floor comment. No pass
 #: widened and no threshold moved.
-_PACKAGE_LINE_BUDGET = 32_206
+#:
+#: Raised again, from 32,206, by 216 lines for ``redaction_patterns._glued_matches``: two
+#: credentials written back to back, where the first's body class takes the second's
+#: prefix, both redact. The JWT header check moves into ``_validated_match`` so the
+#: inner scan shares it; ``_probe_at`` and the two window constants keep the inner scan
+#: linear; ``_URI_START_RE`` / ``_AUTHORITY_END_RE`` find a glued link's start on their own
+#: and match its userinfo to its last `@`, an `eyJ` start is probed on its own and read
+#: whole (only the first `eyJ` of a segment run), and ``_PEM_END_RE`` matches a glued
+#: PEM block to its END marker, as the plain scan does; ``_AWS_LABEL_PREFIX_RE`` /
+#: ``_BEARER_PREFIX_RE`` keep a field label a value already swallowed part of that value
+#: unless ``_TOKEN_CHAR_RE`` shows only its separator was taken;
+#: ``_SPACED_START_RE`` finds PEM, Bearer and AWS field starts on their own, ``_RUN_REST_RE`` redacts
+#: the rest of the run once the probe budget is spent, once per run and without skipping
+#: a credential that starts inside it; the pass-1 splice takes only the part past the
+#: span before it, and twelve manifest lines. No branch widened; other
+#: ``_credential_matches`` callers are unchanged unless they pass ``glued=True``.
+_PACKAGE_LINE_BUDGET = 32_422
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

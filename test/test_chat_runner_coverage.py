@@ -1341,13 +1341,14 @@ class TestBlockedLinkCardRecords:
         assert not check([], {token: tag}, [clean])
         assert not check([], {token: tag}, [dict(base, rule=token, source=None, view_command=None)])
 
-    def test_a_credential_a_glued_neighbour_cut_into_withholds_the_segment(self):
+    def test_a_credential_a_glued_neighbour_cut_into_saves_both_redacted(self):
         """Two glued tokens cut between them: each delta removes its whole
-        token, but the whole-text match of the first swallows the second's
-        head. The rest of the second is not saved; the segment is withheld."""
+        token, and the whole-text redaction removes both too, so the segment
+        is saved with both tags and neither body."""
         first, second = "ghp_" + "Ab1" * 12, "ghp_" + "Zq7" * 12
         content, links = self._flush(["tokens: " + first, second + " end"])
-        assert (content, links) == (chat_runner._SEGMENT_UNCHECKED_TEXT, [])
+        tag = chat_runner.REDACTED_CREDENTIAL_TAG
+        assert (content, links) == (f"tokens: {tag}{tag} end", [])
 
     @pytest.mark.parametrize(
         "deltas",
@@ -1409,13 +1410,6 @@ class TestBlockedLinkCardRecords:
             ),
             pytest.param(
                 [
-                    "x [REDACTED: eyJ" + "a-b_" * 25 + "." + "c" * 21 + "-" + "d" * 21,
-                    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY end",
-                ],
-                id="a-forged-placeholder-opener",
-            ),
-            pytest.param(
-                [
                     "x " + _GLUED_PAT_A,
                     _GLUED_PAT_B + " y\n-----BEGIN PR",
                     "IVATE KEY-----\nhttps://" + _GLUED_PAT_B[3:] + ".example/p?id=" + _AKIA_SAMPLE,
@@ -1425,11 +1419,25 @@ class TestBlockedLinkCardRecords:
             ),
         ],
     )
-    def test_text_a_delta_hid_and_a_glued_match_exposes_withholds_the_segment(self, deltas):
-        """A glued neighbour's whole-text match swallows one end of a credential
-        and another match the other end, or the tail also appears elsewhere:
-        no removed value is left whole, but its body is. The run check finds
-        text the streamed redaction hid, and the segment is withheld."""
+    def test_text_a_delta_hid_beside_glued_tokens_saves_no_token_body(self, deltas):
+        """Glued tokens beside text a delta hid: the whole-text redaction removes
+        each glued token whole, so the saved segment and its link records hold
+        no token body and no password."""
+        content, links = self._flush(deltas)
+        secrets = (_GLUED_PAT_A[4:], _GLUED_PAT_B[4:], _GLUED_SK[7:], _AKIA_SAMPLE[4:])
+        saved = content + "".join(str(record) for record in links)
+        for body in secrets:
+            for i in range(len(body) - 11):
+                assert body[i : i + 12] not in saved, body[i : i + 12]
+        assert "p@ss.w0rd!" not in saved and "p(ss)" not in saved
+
+    def test_text_a_delta_hid_behind_a_forged_placeholder_opener_withholds_the_segment(self):
+        """A forged placeholder opener hides the text after it from the run
+        check, so the segment is withheld."""
+        deltas = [
+            "x [REDACTED: eyJ" + "a-b_" * 25 + "." + "c" * 21 + "-" + "d" * 21,
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY end",
+        ]
         content, links = self._flush(deltas)
         assert (content, links) == (chat_runner._SEGMENT_UNCHECKED_TEXT, [])
 
