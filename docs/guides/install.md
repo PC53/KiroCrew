@@ -553,6 +553,8 @@ Linux, `.\make.ps1 <target>` on Windows.
 Override the Python interpreter with `make PY=python3.12 build`, or
 `.\make.ps1 build -Py C:\path\to\python.exe`.
 
+`make wheel`, `make backend-bin` and `make desktop` take `EDITION=oss` (the default) or `EDITION=enterprise`, stamped into the built package's `kiro_crew/edition.py`; any other value fails the build. On Windows, set `KIROCREW_BUILD_EDITION` before `.\make.ps1`. See [platform-context](../system-specs/modules/platform-context.md#build-time-edition-constant).
+
 Both desktop targets run `packaging/build-desktop.sh` on every platform,
 including Windows, where `make.ps1` invokes it through the Git for Windows bash:
 the script already normalizes MSYS `uname` output and has a Windows PBS branch,
