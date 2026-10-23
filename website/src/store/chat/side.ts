@@ -49,6 +49,45 @@ function insertAfterRun(messages: SideMessage[], row: SideMessage): void {
   messages.push(row)
 }
 
+/** The runs a panel shows a row of, or last saw begin. */
+function runsShownIn(side: SideState): Set<string> {
+  const runs = new Set(side.messages.map(row => row.run_id).filter((runId): runId is string => !!runId))
+  if (side.lastRunId) runs.add(side.lastRunId)
+  return runs
+}
+
+/** Whether `snapshot` holds a different side conversation from the one `readFor`
+ *  shows: the gateway knows none of the runs this tab saw in it, so this one was
+ *  closed while the tab could not hear it. A panel that saw no run cannot tell. */
+function isAnotherConversation(readFor: SideState, snapshot: SideSnapshot): boolean {
+  const runsAtRead = runsShownIn(readFor)
+  if (runsAtRead.size === 0) return false
+
+  const snapshotRuns = new Set((snapshot.messages ?? []).map(row => row.run_id).filter((runId): runId is string => !!runId))
+  if (snapshot.last_run_id) snapshotRuns.add(snapshot.last_run_id)
+  return [...runsAtRead].every(runId => !snapshotRuns.has(runId))
+}
+
+/** Remove optimistic questions the gateway already stores, so the stored rows
+ *  replace them when a socket-open resync merges the same conversation. Matching
+ *  is one-to-one in row order; questions absent from the read stay optimistic. */
+function settleStoredOptimisticRows(local: SideState, snapshot: SideSnapshot): SideState {
+  const localIds = new Set(local.messages.map(row => row.id).filter((id): id is string => !!id))
+  const storedQuestions = (snapshot.messages ?? []).filter(
+    row => row.role === 'user' && !row.steer && !localIds.has(row.id),
+  )
+  const settled = new Set<SideMessage>()
+  for (const row of local.messages) {
+    if (!row.optimistic || row.role !== 'user') continue
+    const storedIndex = storedQuestions.findIndex(stored => stored.content === row.content)
+    if (storedIndex < 0) continue
+    storedQuestions.splice(storedIndex, 1)
+    settled.add(row)
+  }
+  if (!settled.size) return local
+  return { ...local, messages: local.messages.filter(row => !settled.has(row)) }
+}
+
 /** The side state a panel restored from `GET .../side` shows, merged with what
  *  frames already drew in this tab (`local`).
  *
@@ -451,6 +490,45 @@ export const sideReducers = {
     const draft = state.slotSide[slot]
     const local = draft && isDraft(draft) ? current(draft) : draft
     state.slotSide[safeKey(slot)] = restoredSide(local, snapshot)
+  },
+  /** Correct a restored panel still waiting on a turn from a socket-open read of
+   *  the gateway's copy (`resyncWaitingSideConversations`). The read speaks only
+   *  for the panel as it was when the read was sent (`readFor`). A read that finds
+   *  no open conversation, or another conversation (it shares none of the runs
+   *  `readFor` shows), stops the wait for the turns the read covers and leaves the
+   *  rows alone. A read that shares one of those runs settles optimistic questions
+   *  already stored by the gateway, then is merged as a restore merges it. A read
+   *  whose conversation this tab closed and replaced while the read was
+   *  out (the panel carries another `createdAt`) changes nothing. */
+  sideResync(state: ChatState, action: PayloadAction<{ slot: string; snapshot: SideSnapshot; readFor: SideState }>) {
+    const { slot, snapshot, readFor } = action.payload
+    if (isUnsafeKey(slot) || state.slotSideClosed?.[slot]) return
+    const side = state.slotSide[slot]
+    if (!side || side.createdAt !== readFor.createdAt) return
+    if (!snapshot.open || isAnotherConversation(readFor, snapshot)) {
+      // The conversation the read was made for is gone, so no turn the read covers
+      // can still run. A turn begun after the read was sent is newer than the read.
+      delete side.awaitingFinalRunId
+      if (side.lastRunId && !runsShownIn(readFor).has(side.lastRunId)) return
+      side.pending = false
+      side.streaming = false
+      return
+    }
+    const local = isDraft(side) ? current(side) : side
+    const merged = restoredSide(settleStoredOptimisticRows(local, snapshot), snapshot)
+    side.messages = merged.messages
+    side.pending = merged.pending
+    side.streaming = merged.streaming
+    if (merged.lastRunId) side.lastRunId = merged.lastRunId
+    // A restored turn's rows read as one this tab saw begin, so the merge alone
+    // would stop holding its deltas back. It keeps waiting while the gateway
+    // still runs it and has stored no answer for it.
+    const awaited = local.awaitingFinalRunId
+    const stillAwaited = !!awaited && snapshot.running === true && snapshot.last_run_id === awaited
+      && !merged.messages.some(m => m.run_id === awaited && m.role === 'assistant' && (!!m.id || !!m.is_error))
+    const awaiting = merged.awaitingFinalRunId ?? (stillAwaited ? awaited : undefined)
+    if (awaiting) side.awaitingFinalRunId = awaiting
+    else delete side.awaitingFinalRunId
   },
   sideOptimisticAppend(state: ChatState, action: PayloadAction<{ slot: string; message: SideMessage }>) {
     const { slot, message } = action.payload

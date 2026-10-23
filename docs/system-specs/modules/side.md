@@ -249,6 +249,26 @@ live one did. The other error notices a turn can end with are not stored, so aft
 a reload such a turn shows its question without the notice, which is also what
 the model holds.
 
+**After the socket connects.** Side frames reach owner sockets only, so a turn
+that ends while this tab cannot hear it (after the restore read was answered but
+before the socket connected, or while the socket is down) sends its final frame
+to no socket of this tab. So each time the socket opens, a restored panel still
+waiting on a turn reads `GET .../side` again, once any restore read still in
+flight has landed (`resyncWaitingSideConversations` in `store/chatSlice.ts`,
+`sideResync` in `store/chat/side.ts`). The read is judged against the panel as it
+was when the read was sent. A read that shares one of its runs is merged the way a
+restore merges it: the stored rows and the busy state. A question this tab sent
+that the gateway already stores takes its stored row, so it shows once and the
+panel stops waiting for it; a question the read does not hold yet stays pending.
+The queue keeps to its own frames. A read with no open conversation, or one that
+shares none of those runs and so describes another conversation (this one was
+closed while the tab could not hear it), stops the wait and leaves the panel's
+rows as they are. Runs decide which conversation a read describes, not
+`created_at`: a conversation this tab started carries this tab's own time. Either
+way a turn begun after the read was sent stays busy, since the read is older than
+it. A read that lands after its conversation was closed and replaced in this tab
+changes nothing (`sideResync` checks the conversation's `createdAt`).
+
 ## Wire Protocol
 
 Event name: `chat.side_result`  

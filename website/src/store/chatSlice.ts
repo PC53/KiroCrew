@@ -1023,7 +1023,7 @@ export const {
   sseSubagentSnapshot, sseToolActivity, sseToolResult, sseActivityEvent,
   sseMcpAppRender,
   sseWorkflowEvent, clearWorkflowRun, reconcileWorkflowRuns,
-  sseSideResult, sseSideQueue, sideSendStatus, sideReleaseConsumed, sideClose, sideRestore, sideOptimisticAppend, sideOptimisticRollback,
+  sseSideResult, sseSideQueue, sideSendStatus, sideReleaseConsumed, sideClose, sideRestore, sideResync, sideOptimisticAppend, sideOptimisticRollback,
 } = chatSlice.actions
 
 /** The `GET /api/spawn` read in flight, shared by every gone card that asks
@@ -1072,6 +1072,37 @@ export const restoreSideConversation = createAsyncThunk<void, string, { state: R
       sideRestoreReads.set(slot, read)
     }
     dispatch(sideRestore({ slot, snapshot: await read }))
+  },
+)
+
+/**
+ * A side turn can end while this tab cannot hear it: before its socket first
+ * connects, when the restore read was answered first, or while the socket is
+ * down. Its final frame then reaches no socket of this tab, and a panel waiting
+ * on the turn would wait until the next reload. So each time the socket opens,
+ * every restored panel still waiting on a turn reads the gateway's copy again
+ * (`sideResync`), once any restore read still in flight has landed. A 404 means
+ * the slot is gone, so nothing of it still runs. A conversation closed and
+ * replaced while the read was out keeps to its own frames.
+ */
+export const resyncWaitingSideConversations = createAsyncThunk<void, void, { state: RootState }>(
+  'chat/resyncWaitingSideConversations',
+  async (_, { dispatch, getState }) => {
+    const slots = new Set([...Object.keys(getState().chat.slotSide), ...sideRestoreReads.keys()])
+    await Promise.all([...slots].map(async slot => {
+      await sideRestoreReads.get(slot)?.catch(() => undefined)
+      const { slotSide, slotSideRestored } = getState().chat
+      const side = slotSide[slot]
+      if (!slotSideRestored?.[slot] || !side || !(side.pending || side.streaming || side.awaitingFinalRunId)) return
+      let snapshot: SideSnapshot
+      try {
+        snapshot = await api.sideState(slot)
+      } catch (e: unknown) {
+        if (!isNotFoundError(e)) return
+        snapshot = { open: false }
+      }
+      dispatch(sideResync({ slot, snapshot, readFor: side }))
+    }))
   },
 )
 
