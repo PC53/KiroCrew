@@ -30,7 +30,10 @@ from kiro_crew.atomic_write import atomic_write
 from kiro_crew.config.loader import _raw_config, config_dir
 from kiro_crew.dashboard.dashboard_persistence import DashboardPersistenceCoordinator
 from kiro_crew.dashboard.interaction_coordinator import ApprovalCoordinator, QuestionCoordinator
-from kiro_crew.dashboard.notification_coordinator import NotificationCoordinator
+from kiro_crew.dashboard.notification_coordinator import (
+    NotificationCoordinator,
+    native_notification_tag,
+)
 from kiro_crew.dashboard.slot_registry import SlotRegistry
 from kiro_crew.dashboard.state_parts.notification_log import (
     _MAX_PERSISTED_NOTIFICATIONS,
@@ -54,7 +57,101 @@ if TYPE_CHECKING:
 logger = logging.getLogger("kiro_crew.dashboard.state")
 
 
-def _new_notification_coordinator() -> NotificationCoordinator:
+#: Push services reject an encrypted payload larger than 4 KB with 413, which
+#: the fan-out treats as a transient, non-gone failure it never retries — so an
+#: oversized note silently never reaches the closed device this feature exists
+#: for. The notification bus permits a 20,000-char body (``_MAX_BODY_LEN``), and
+#: a multibyte (CJK) body multiplies to ~3x that in UTF-8, far past the ceiling.
+#: Every string field of the payload gets its own budget in SERIALIZED bytes:
+#: the UTF-8 length of its JSON-escaped form, as ``send_web_push`` encodes it
+#: (``ensure_ascii=False``), so a quote, backslash or control character that
+#: escapes to 2 or 6 bytes is counted at that size. The budgets plus the fixed
+#: JSON envelope (about 110 bytes) stay under ``_PUSH_PAYLOAD_BYTES``, which is
+#: the 4096 byte ceiling minus the aes128gcm framing (86 byte header, 16 byte
+#: tag, 1 byte padding delimiter) and a margin. The deep link is sent twice
+#: (``navigate`` and ``data.url``), so it is counted twice.
+_PUSH_PAYLOAD_BYTES = 3800
+_PUSH_TITLE_BYTES = 256
+_PUSH_BODY_BYTES = 2000
+_PUSH_TAG_BYTES = 128
+_PUSH_CHANNEL_BYTES = 128
+_PUSH_TS_BYTES = 64
+_PUSH_URL_BYTES = 384
+
+
+def _json_str_bytes(text: str) -> int:
+    """Bytes *text* occupies inside the serialized payload, quotes excluded."""
+    return len(json.dumps(text, ensure_ascii=False).encode("utf-8")) - 2
+
+
+def _truncate_bytes(text: str, byte_limit: int) -> str:
+    """Cap *text* so its serialized form is at most *byte_limit* bytes.
+
+    Counts each character at its JSON-escaped UTF-8 size (a CJK char is 3
+    bytes, a control character up to 6) and cuts only between characters, so
+    no multibyte sequence or escape is split. Marks a cut with an ellipsis,
+    which itself fits inside the budget.
+    """
+    if _json_str_bytes(text) <= byte_limit:
+        return text
+    budget = max(0, byte_limit - _json_str_bytes("…"))
+    used = 0
+    end = 0
+    for ch in text:
+        cost = _json_str_bytes(ch)
+        if used + cost > budget:
+            break
+        used += cost
+        end += 1
+    return text[:end] + "…"
+
+
+def _web_push_payload(note: dict[str, Any]) -> dict[str, Any]:
+    """Build the declarative Web Push JSON for one delivered note.
+
+    Shape follows WebKit's Declarative Web Push (``web_push: 8030`` +
+    ``notification``): on iOS/Safari 18.4+ the payload renders natively with no
+    service-worker push handler, while Chromium/Firefox receive the identical
+    JSON in a classic ``push`` event and read the same ``notification`` object.
+    The ``navigate`` URL is a same-origin dashboard path (the deep link the note
+    already carries, defaulting to the dashboard root) so a click reopens the
+    right place; ``data`` echoes the note timestamp for click bookkeeping.
+
+    Every string field is held to a serialized byte budget so the encrypted
+    payload stays under the 4 KB Web Push ceiling: an oversized push is
+    rejected with 413 and never arrives. Text fields are truncated; a deep link
+    or timestamp over budget is replaced (by the dashboard root, or dropped),
+    because a cut link or id would point nowhere.
+    """
+    title = _truncate_bytes(note.get("title") or "Kiro Crew", _PUSH_TITLE_BYTES)
+    body = _truncate_bytes(note.get("body") or "", _PUSH_BODY_BYTES)
+    navigate = str(note.get("url") or "/")
+    if _json_str_bytes(navigate) > _PUSH_URL_BYTES:
+        navigate = "/"
+    ts = note.get("ts")
+    if not isinstance(ts, str) or _json_str_bytes(ts) > _PUSH_TS_BYTES:
+        ts = None
+    channel = note.get("channel")
+    if channel is not None:
+        channel = _truncate_bytes(str(channel), _PUSH_CHANNEL_BYTES)
+    notification: dict[str, Any] = {
+        "title": title,
+        "body": body,
+        "navigate": navigate,
+        "data": {"ts": ts, "channel": channel, "url": navigate},
+    }
+    # The tag the coordinator stamped on the note, so the service worker's
+    # banner replaces (not duplicates) the one an open tab already showed.
+    tag = note.get("tag")
+    if not isinstance(tag, str) or not tag or _json_str_bytes(tag) > _PUSH_TAG_BYTES:
+        tag = native_notification_tag(note)
+    notification["tag"] = tag
+    return {"web_push": 8030, "notification": notification}
+
+
+def _new_notification_coordinator(
+    web_push_fanout: Callable[[dict[str, Any]], None] | None = None,
+) -> NotificationCoordinator:
     """Build a coordinator whose providers resolve facade seams at call time."""
     return NotificationCoordinator(
         logger_provider=lambda: logger,
@@ -66,6 +163,7 @@ def _new_notification_coordinator() -> NotificationCoordinator:
         rewrite_all=lambda notes: _rewrite_notifications(notes),
         executor_provider=lambda: _notification_io_executor(),
         max_persisted=_MAX_PERSISTED_NOTIFICATIONS,
+        web_push_fanout=web_push_fanout,
     )
 
 
@@ -635,6 +733,55 @@ def notify(
         member=member,
         publisher_session=publisher_session,
     )
+
+
+def _fan_out_web_push(self: DashboardState, note: dict[str, Any]) -> None:
+    """Schedule Web Push delivery of a note to every browser subscription.
+
+    Called from the delivery sink (synchronous). Web Push is network I/O, so
+    this only schedules an async task on the running loop and returns; with
+    no loop (a synchronous test delivery) it is a no-op, mirroring how the
+    sink's persist step degrades. Best-effort by contract: a failed push
+    must never affect the in-app notification that already landed.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(self._send_web_push_all(note))
+
+
+async def _send_web_push_all(self: DashboardState, note: dict[str, Any]) -> None:
+    """Encrypt-and-POST a note to every stored subscription; prune dead ones."""
+    # Imported here, not at module top: web_push pulls in `cryptography`, and
+    # the dashboard state sits on the tool-approval import chain
+    # (slack.gateway -> dashboard.server -> … -> state). A top-level import
+    # would drag the native wheel onto that chain and break every approval on
+    # a host whose cryptography wheel does not load
+    # (test_approval_chain_no_cryptography). The fan-out is the only user.
+    from kiro_crew.notifications.web_push import PushResult, public_push_session, send_web_push
+
+    # Offloaded: the first read loads the subscriptions file.
+    subscriptions = await asyncio.to_thread(self.push_subscription_store.all)
+    if not subscriptions:
+        return
+    payload = _web_push_payload(note)
+    try:
+        async with public_push_session() as session:
+            results = await asyncio.gather(
+                *(send_web_push(session, sub, payload) for sub in subscriptions),
+                return_exceptions=True,
+            )
+    except Exception:
+        logger.warning("Web push fan-out session failed", exc_info=True)
+        return
+    for sub, result in zip(subscriptions, results):
+        # A 404/410 is the push service's authoritative "this subscription
+        # is dead" (RFC 8030); drop it so the store does not accumulate
+        # tombstones and re-POST to it every notification. remove() does an
+        # atomic file write, so offload it rather than blocking the loop.
+        if isinstance(result, PushResult) and result.gone:
+            await asyncio.to_thread(self.push_subscription_store.remove, sub["endpoint"])
 
 
 def _deliver_note(self: DashboardState, note: dict[str, Any]) -> None:
