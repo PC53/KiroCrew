@@ -487,7 +487,11 @@ def _url_payload_command(n: int) -> str:
 #: ``paths_lists``: the Meetings app's per-meeting user notes tree, write-denied to
 #: the agent file tools and read-allowed so the dashboard can serve pasted images.
 #: Data, not rule logic: the matcher and every other entry are unchanged.
-_PACKAGE_LINE_BUDGET = 32_447
+#:
+#: One more, from 32,447, for the ``browser-cookie-import`` entry in
+#: ``_CREW_SECRET_LEAVES``: the imported browser cookies, fenced at the tool gate as
+#: well as masked.
+_PACKAGE_LINE_BUDGET = 32_448
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
