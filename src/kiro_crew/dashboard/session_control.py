@@ -75,6 +75,7 @@ _OWNERS = (
     "kiro_crew.dashboard.session_control_parts.session_messaging",
     "kiro_crew.dashboard.session_control_parts.session_create",
     "kiro_crew.dashboard.session_control_parts.session_tree",
+    "kiro_crew.dashboard.session_control_parts.session_handoff",
     "kiro_crew.dashboard.session_control_parts.session_status",
     "kiro_crew.dashboard.session_control_parts.session_revive",
 )
@@ -97,6 +98,8 @@ if TYPE_CHECKING:  # every owner-defined name this module forwards, for type che
         APP_CRON_OWNER_PREFIX,
         CRON_LINK_PREFIX,
         CRON_SLOT_PREFIX,
+        HANDOFF_WIDENED_OPERATIONS,
+        MAX_MANAGER_CHAIN,
         UNATTENDED_SLOT_PREFIXES,
         WORKFLOW_SLOT_PREFIX,
         SessionControlError,
@@ -110,9 +113,11 @@ if TYPE_CHECKING:  # every owner-defined name this module forwards, for type che
         _delegation_lineage_fenced,
         _member_bypass,
         _member_caller,
+        _outside_reach,
         _sel_off_loop,
         _store_is_member_owned,
         caller_slot_key,
+        manager_chain_enabled,
         member_admitted_to_scoped_surface,
         member_dispatch_enabled,
         member_owns_slot,
@@ -187,6 +192,13 @@ if TYPE_CHECKING:  # every owner-defined name this module forwards, for type che
         _model_pin_refusal,
         _record_spawn,
         create_session,
+    )
+    from kiro_crew.dashboard.session_control_parts.session_handoff import (  # noqa: F401
+        _manages_up_the_line,
+        _move_tree_edge,
+        _note_in_transcript,
+        hand_back_on_close,
+        handoff_target,
     )
     from kiro_crew.dashboard.session_control_parts.session_messaging import (  # noqa: F401
         _FORGED_PROVENANCE_RE,
@@ -354,6 +366,7 @@ if TYPE_CHECKING:  # names this module re-exported from other modules
     from kiro_crew.context_assembly.markers import _marker_spans  # noqa: F401
     from kiro_crew.crew_log import emit as crew_log_emit  # noqa: F401
     from kiro_crew.crew_log.session_tree_projection import projection  # noqa: F401
+    from kiro_crew.dashboard import session_managers  # noqa: F401
     from kiro_crew.dashboard.chat_delivery import sanitize_outbound  # noqa: F401
     from kiro_crew.dashboard.chat_folders import _folder_declared_project  # noqa: F401
     from kiro_crew.dashboard.chat_folders import _resolve_folder_project_dir  # noqa: F401
@@ -392,6 +405,7 @@ if TYPE_CHECKING:  # names this module re-exported from other modules
     from kiro_crew.dashboard.state import SlotOrigin  # noqa: F401
     from kiro_crew.dashboard.state import _normalize_slot_key  # noqa: F401
     from kiro_crew.dashboard.state import _safe_folder_tree  # noqa: F401
+    from kiro_crew.dashboard.state import append_and_surface  # noqa: F401
     from kiro_crew.dashboard.state import load_window_off_loop  # noqa: F401
     from kiro_crew.dashboard.stop_retry import allow_escalation  # noqa: F401
     from kiro_crew.effort import EFFORT_LEVELS  # noqa: F401
