@@ -121,6 +121,7 @@ class _RecordingProvider:
     def __init__(self) -> None:
         self.approved: list[str] = []
         self.rejected: list[str] = []
+        self.deny_reasons: list[str] = []
 
     async def approve_tool(self, request_id: str) -> None:
         self.approved.append(request_id)
@@ -147,6 +148,12 @@ async def _resolve_headless(command: str, approver: object = None) -> _Recording
         return None
 
     provider = _RecordingProvider()
+
+    async def _record_deny(_provider: object, _event: object, reason: str, **_kw: object) -> None:
+        provider.deny_reasons.append(reason)
+
+    import kiro_crew.llm_helpers as llm_helpers_mod
+
     event = LLMEvent(
         kind=EVENT_PERMISSION_REQUEST,
         title=f"Running: {command}",
@@ -157,6 +164,7 @@ async def _resolve_headless(command: str, approver: object = None) -> _Recording
     with (
         patch.object(sel_mod, "sel", lambda: MagicMock()),
         patch.object(name_grant, "refusal_for_event", _clean),
+        patch.object(llm_helpers_mod, "_steer_host_deny", _record_deny),
     ):
         await _resolve_permission(
             provider,  # type: ignore[arg-type]
@@ -175,6 +183,111 @@ async def test_a_git_read_is_refused_where_no_approver_exists(command: str) -> N
     git unchecked; it is refused instead."""
     provider = await _resolve_headless(command)
     assert (provider.approved, provider.rejected) == ([], ["r1"])
+    assert provider.deny_reasons == [_NO_APPROVER_GIT_REASON]
+
+
+#: The refusal the no-approver git branch sends, so a test can tell it from a hook deny.
+_NO_APPROVER_GIT_REASON = (
+    "a git command is never run without an approval (git runs programs "
+    "its repository config names) and this surface has no approver"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    ["git commit -m wip", "git checkout -b topic", "make && git add -A", "env git merge topic"],
+)
+async def test_a_git_write_is_refused_where_no_approver_exists(command: str) -> None:
+    """A git command that is not a read runs repository-configured programs too
+    (hooks), so with no approver it is refused like a git read."""
+    assert is_read_only_bash(command) is False
+    provider = await _resolve_headless(command)
+    assert (provider.approved, provider.rejected) == ([], ["r1"])
+    assert provider.deny_reasons == [_NO_APPROVER_GIT_REASON]
+
+
+@pytest.mark.asyncio
+async def test_a_git_write_still_reaches_an_approver_that_exists() -> None:
+    async def _approve(_event: object) -> bool:
+        return True
+
+    provider = await _resolve_headless("git commit -m wip", _approve)
+    assert (provider.approved, provider.rejected) == (["r1"], [])
+
+
+@pytest.mark.asyncio
+async def test_a_non_git_write_keeps_the_hook_based_default_where_no_approver_exists() -> None:
+    """Only git is refused: a non-git command the hook allows keeps the surface's
+    default, so the refusal is scoped to what runs repository-configured programs."""
+    provider = await _resolve_headless("touch notes.txt")
+    assert (provider.approved, provider.rejected) == (["r1"], [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["pytest $(ls tests)", "cat <(ls) > out.txt", "$EDITOR notes"])
+async def test_an_unreadable_non_git_write_keeps_the_hook_based_default(command: str) -> None:
+    """A command whose program cannot be read from its text, and that is not a read,
+    is not refused as git: it keeps the surface's default, as before."""
+    assert is_read_only_bash(command) is False
+    provider = await _resolve_headless(command)
+    assert (provider.approved, provider.rejected) == (["r1"], [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["echo $(git rev-parse HEAD) > out.txt", "make `git describe`"])
+async def test_git_inside_a_substitution_is_refused_where_no_approver_exists(command: str) -> None:
+    provider = await _resolve_headless(command)
+    assert (provider.approved, provider.rejected) == ([], ["r1"])
+    assert provider.deny_reasons == [_NO_APPROVER_GIT_REASON]
+
+
+@pytest.mark.parametrize(
+    ("command", "names_git"),
+    [
+        ("git status", True),
+        ("ls && GIT_DIR=x git log", True),
+        ("echo $(git status)", True),
+        ("echo $(date)", False),
+        ("$EDITOR notes", False),
+        ("ls git-notes", False),
+        ("xargs git add", True),
+        ("timeout 5 git fetch", True),
+        ("timeout --signal KILL 5 git fetch", True),
+        ("sudo -u builder env -i PATH=/usr/bin git push", True),
+        ("nice nohup git gc", True),
+    ],
+)
+def test_command_names_git_reads_only_what_it_can_see(command: str, names_git: bool) -> None:
+    from kiro_crew.security.readonly_bash import command_names_git
+
+    assert command_names_git(command) is names_git
+
+
+RUNNER_ARGUMENT_COMMANDS = [
+    "find . -name '*.md' | xargs grep -ln git",
+    "xargs -a files.txt grep -n 'git'",
+    "timeout 60 rg -n git docs/",
+    "nice -n 10 grep -rn git src/",
+    "env LC_ALL=C grep -c git CHANGELOG.md",
+    "time make docs VCS=git",
+]
+
+
+@pytest.mark.parametrize("command", RUNNER_ARGUMENT_COMMANDS)
+def test_a_word_after_the_program_a_runner_runs_is_not_read_as_git(command: str) -> None:
+    """After a runner, only the program it runs is read; ``git`` as that program's
+    argument runs no git."""
+    from kiro_crew.security.readonly_bash import command_names_git
+
+    assert command_names_git(command) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", RUNNER_ARGUMENT_COMMANDS)
+async def test_git_as_a_runner_programs_argument_keeps_the_hook_based_default(command: str) -> None:
+    provider = await _resolve_headless(command)
+    assert (provider.approved, provider.rejected) == (["r1"], [])
 
 
 @pytest.mark.asyncio

@@ -470,7 +470,14 @@ def _url_payload_command(n: int) -> str:
 #: manifest line, its rule id and reason in ``denied_rules_tables``, its ``deny_gate``
 #: registration, its facade export, and its name in the ungated-floor comment. No pass
 #: widened and no threshold moved.
-_PACKAGE_LINE_BUDGET = 32_206
+#:
+#: Raised again, from 32,206, by 39 lines for ``readonly_bash.command_names_git``: the
+#: no-approver hook surface refuses a command that names git at a command position, a
+#: substitution's included, without counting a command it cannot read as git, and reads
+#: only the program a runner runs. One function, ``_RUNNER_NUMBER_RE`` and two keywords
+#: on ``_runs_git_at_a_command_position``; ``command_invokes_git`` and every caller of it
+#: are unchanged.
+_PACKAGE_LINE_BUDGET = 32_245
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

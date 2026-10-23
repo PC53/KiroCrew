@@ -1542,16 +1542,55 @@ def command_invokes_git(cmd: str) -> bool:
     return False
 
 
-def _runs_git_at_a_command_position(words: list[str]) -> bool:
-    after_runner = skip_target = False
+def command_names_git(cmd: str) -> bool:
+    """Whether ``cmd`` names ``git`` at a command position, a substitution's included.
+
+    Unlike :func:`command_invokes_git`, what cannot be read is not counted as git, and
+    after a program runner only the program it runs is read, so a caller that refuses
+    outright on this refuses only a command that runs git.
+    """
+    for segment in re.split(r"&&|\|\||[;|\n]|(?<![<>])&(?!>)", _HIDDEN_COMMAND_RE.sub(";", cmd)):
+        raw = [
+            word.strip("'\"") for word in segment.replace("(", " ( ").replace(")", " ) ").split()
+        ]
+        if _runs_git_at_a_command_position(raw, unreadable_is_git=False, runner_args_too=False):
+            return True
+    return False
+
+
+#: A runner's numeric operand (``timeout 60``, ``timeout 5s``, ``nice -n 10``).
+_RUNNER_NUMBER_RE = re.compile(r"^\d+(?:\.\d+)?[smhd]?$")
+
+
+def _runs_git_at_a_command_position(
+    words: list[str], *, unreadable_is_git: bool = True, runner_args_too: bool = True
+) -> bool:
+    after_runner = skip_target = after_option = False
     for word in words:
         if _is_git(word):
             return True
         if after_runner:
-            # A runner's own options and values (``timeout 5``, ``env -i``) sit
-            # before the program it runs, so every later word is read as a
-            # possible program. Over-refusing here only costs an approval card.
-            continue
+            if runner_args_too:
+                # A runner's own options and values (``timeout 5``, ``env -i``) sit
+                # before the program it runs, so every later word is read as a
+                # possible program. Over-refusing here only costs an approval card.
+                continue
+            # Read only up to the program the runner runs. A word after an option
+            # may be that option's value (``timeout --signal KILL git``), so it is
+            # checked above but does not end the walk; the first other word that is
+            # not an option, an assignment or a number is the program, and the words
+            # after it are its arguments. The cost of not knowing which flags take a
+            # value: a program right after a flag is read as that flag's value, so
+            # ``xargs -0 grep git`` is still refused.
+            value_slot = after_option
+            after_option = word.startswith("-") and "=" not in word
+            if word.startswith("-") or value_slot or _ASSIGNMENT_RE.match(word):
+                continue
+            if _RUNNER_NUMBER_RE.match(word):
+                continue
+            if word.replace("\\", "/").rsplit("/", 1)[-1].lower() in _PROGRAM_RUNNERS:
+                continue
+            return False
         if skip_target:
             skip_target = False
             continue
@@ -1565,8 +1604,8 @@ def _runs_git_at_a_command_position(words: list[str]) -> bool:
             continue
         if "$" in word:
             # An expansion in the program position names a program this walk
-            # cannot read, so it is read as git, the safe answer.
-            return True
+            # cannot read, so it is read as git, the safe answer, when asked to.
+            return unreadable_is_git
         if word.replace("\\", "/").rsplit("/", 1)[-1].lower() in _PROGRAM_RUNNERS:
             after_runner = True
             continue
