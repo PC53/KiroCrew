@@ -3372,6 +3372,7 @@
         "highlight_4": "Relis les actions extraites avant tout enregistrement — archive le bruit, enregistre le reste",
         "highlight_5": "Fournisseurs de tâches et d’agenda enfichables : un registre de tâches local et un lecteur iCalendar (.ics) sont fournis, et une organisation peut enregistrer les siens",
         "highlight_6": "Relis la transcription ligne par ligne dans une autre langue pendant que la réunion se déroule",
+        "highlight_7": "Garde tes propres notes à côté de celles des agents — colle une capture d'écran et elle arrive avec le temps écoulé de la réunion",
         "page_label": "Réunions",
         "use_case_1": "Capture une réunion en direct pendant que des agents parallèles produisent la transcription, les notes structurées, le diagramme et la revue des actions à mener.",
         "configuration_1": "Autorise le navigateur à accéder au microphone pour la capture en direct ; configure éventuellement dans les paramètres un chemin ou une URL iCalendar, le registre local des tâches, les rôles d'agent et les termes de correction vocale."
@@ -3398,6 +3399,7 @@
         "start": "Démarrer",
         "toggleTasks": "Actions à suivre",
         "titleLabel": "Titre de la réunion",
+        "toggleNote": "Ma note",
         "toggleTranslation": "Traduction",
         "unpause": "Reprendre"
       },
@@ -3479,7 +3481,10 @@
         "anotherMeetingActiveNamed": "« {{title}} » est toujours en cours. Ouvre-la dans Réunions et choisis d’abord « Terminer et passer en revue ».",
         "anotherMeetingReviewing": "« {{title}} » est encore en revue. Ouvre-la dans Réunions et choisis d’abord « Clore la réunion ».",
         "sttStreamingDisabled": "La transcription en direct est désactivée. Dans Paramètres → Voix, vérifie que la saisie vocale est activée, que le fournisseur gère le streaming et que Streaming est activé.",
-        "openVoiceSettings": "Ouvrir les paramètres vocaux"
+        "openVoiceSettings": "Ouvrir les paramètres vocaux",
+        "noteSaveFailed": "Impossible d'enregistrer ta note.",
+        "noteImageFailed": "Impossible d'ajouter cette image. Colle un PNG, JPEG, GIF ou WebP.",
+        "noteImageTooLarge": "Cette image est trop volumineuse pour une note."
       },
       "settings": {
         "addTerm": "Ajouter",
@@ -3557,6 +3562,22 @@
         "chat": "Discussion",
         "html": "Schéma",
         "markdown": "Notes"
+      },
+      "note": {
+        "title": "Ma note",
+        "close": "Fermer la note",
+        "placeholder": "Écris ici tes propres notes. Markdown est pris en charge.",
+        "saving": "Enregistrement…",
+        "unsaved": "Modifications non enregistrées",
+        "saved": "Enregistrée",
+        "hint": "Enregistrement automatique au fil de la saisie.",
+        "editorLabel": "Texte de la note",
+        "preview": "Aperçu",
+        "edit": "Modifier",
+        "uploading": "Ajout de l'image…",
+        "loading": "Chargement de ta note…",
+        "loadFailed": "Impossible de lire ta note sur le disque. La modification est en pause pour ne rien écraser : ferme puis rouvre le panneau pour réessayer.",
+        "paused": "Modification en pause"
       }
     },
     "mochi": {
@@ -6472,7 +6493,6 @@
       "stop_generation": "Arrêter la génération",
       "stop_recording": "Arrêter l’enregistrement",
       "stop_the_current_response_to_switch_agents": "Arrête la réponse en cours pour changer d’agent",
-      "stop_the_current_response_to_switch_model": "Arrête la réponse en cours pour changer de modèle",
       "stopping": "Arrêt…",
       "stopping_2": "Arrêt",
       "switch_not_confirmed": "Changement non confirmé pour l'instant — il s'appliquera si la connexion est rétablie.",
@@ -6517,6 +6537,7 @@
       "compacting_context_stop_unavailable": "Compactage du contexte — l'arrêt est indisponible jusqu'à la fin",
       "click_again_to_force_stop_resets_session": "Cliquer à nouveau pour forcer l’arrêt (redémarre la session ; tes messages restent, l’agent garde un extrait récent)",
       "model_inherited_default": "Cette session utilise le modèle par défaut ({{name}}). Elle n’a pas de modèle propre, elle change donc si le défaut change. Cliquez pour en épingler un.",
+      "model_switch_applies_next_turn": "Ton prochain message utilisera le modèle que tu choisis. Cette réponse se termine avec le modèle avec lequel elle a commencé.",
       "terminal_attachments": "Retire les pièces jointes avant d’exécuter une commande de terminal.",
       "terminal_folder_attachments": "Retire les dossiers joints avant d’exécuter la commande. Retirer un dossier supprime aussi sa référence {{folderRef}} de la commande.",
       "terminal_default_directory": "Répertoire de démarrage du terminal",
@@ -10452,6 +10473,10 @@
       "stream_error_vocabulary_rejected": "Amazon Transcribe n’a pas pu utiliser ton vocabulaire personnalisé. Choisis-en un autre, ou Aucun, dans les paramètres de reconnaissance vocale, puis réessaie.",
       "stream_error_sdk_outdated": "Les langues mélangées nécessitent amazon-transcribe 0.6.3 ou plus récent dans le gateway. Mets-le à jour avec la commande indiquée dans le journal du gateway, ou vide Langues mélangées dans les paramètres de reconnaissance vocale, puis réessaie."
     },
+    "speechProviders": {
+      "unavailable_no_reason": "Ce fournisseur ne peut pas fonctionner pour le moment.",
+      "sign_in_hint": "Connecte-toi avec ton {{account}} pour l’utiliser."
+    },
     "templateSource": {
       "built_in": "Intégré",
       "package": "Package",
@@ -12371,7 +12396,8 @@
       },
       "messageContextMenu": {
         "copy_link_text": "Copier le texte du lien",
-        "copy_link_address": "Copier l'adresse du lien"
+        "copy_link_address": "Copier l'adresse du lien",
+        "open_link_new_tab": "Ouvrir le lien dans un nouvel onglet"
       },
       "dashboardPreviewPanel": {
         "tab_title": "{{name}} (aperçu)",
@@ -13893,6 +13919,9 @@
       "save_changes": "Enregistrer les modifications",
       "session_color_hint_member": "Les sessions lancées par ce coéquipier utilisent cette couleur sauf si la session a la sienne. Laisse vide pour aucune couleur de coéquipier.",
       "shared_lower": "en commun",
+      "memory_label_private": "Propre à ce coéquipier",
+      "memory_label_shared": "En commun",
+      "memory_label_check": "Ouvre pour vérifier",
       "shown_across_the_dashboard_instead_of_the_name_l": "Affiché dans tout le tableau de bord à la place du nom ({{name}}). Laisse vide pour afficher le nom lui-même.",
       "subdirectory_inside_kiro_crew_where_this_workspa": "Sous-répertoire dans ~/.kiro/crew où cet espace de travail stocke ses données (historique des chats, leçons, projets). Chaque espace de travail dispose de son propre répertoire isolé.",
       "triggers": "Triggers",
@@ -17770,6 +17799,7 @@
         "unavailable_disabled": "La reconnaissance vocale est désactivée. Activez-la ci-dessus.",
         "status_provider_off": "N’écoute pas",
         "status_not_working": "ne fonctionne pas",
+        "status_unavailable_provider": "indisponible",
         "unavailable_provider_off": "La voix est activée, mais le fournisseur est réglé sur Désactivé, donc rien n’écoute. Choisis un autre fournisseur dans le menu Fournisseur ci-dessous.",
         "unavailable_extra_missing": "Les paquets vocaux ne sont pas installés dans l’environnement Python du gateway.",
         "unavailable_no_wheel": "Aucun moteur de reconnaissance vocale précompilé n’existe pour cette plateforme. Installez un compilateur C++ et CMake, puis réinstallez les paquets vocaux.",
@@ -18887,6 +18917,7 @@
       "empty_title": "Aucun coéquipier pour l'instant",
       "empty_body": "Ton coéquipier IA. Donne-lui une mission ; il continue à travailler pendant ton absence.",
       "built_from_default": "{{agent}} (par défaut)",
+      "built_from_own_copy": "Sa propre copie",
       "built_from_hint": "La configuration de départ qu'il copie : outils, connexions et instructions. {{agent}} est la configuration standard. Tu pourras la changer plus tard.",
       "create_name": "Nom",
       "create_name_placeholder": "p. ex. Radar ou Dr. Eggbot",
@@ -18912,6 +18943,8 @@
       "add_member_settling": "Le premier message de {{name}} se termine avant d’ajouter un autre coéquipier.",
       "create_options_failed": "Impossible de charger les choix « {{list}} » ; la valeur par défaut est affichée.",
       "welcome_title": "Voici ce sur quoi je travaillais",
+      "entrance_first_mate": "Salut ! Je suis ton premier coéquipier.",
+      "entrance_hello": "Salut ! Je suis {{name}}.",
       "welcome_paused": "En pause : {{goal}}",
       "welcome_paused_next": "En pause : {{goal}} (prochaine étape : {{next}})",
       "welcome_recent": "Session récente, peut-être terminée : {{title}}",
@@ -19011,12 +19044,13 @@
       "profile_sessions_tab": "Sessions",
       "profile_goals_tab": "Objectifs",
       "profile_permissions": "Autorisations",
+      "profile_settings": "Réglages",
       "profile_effort_hint": "Plus le niveau est élevé, plus il réfléchit longtemps, répond lentement et coûte cher.",
       "profile_settings_waiting": "Modifiable une fois la discussion avec ce coéquipier ouverte.",
       "profile_permission_changed": "L'autorisation a été modifiée ailleurs. Voici le réglage actuel.",
-      "profile_mode_normal_hint": "{{name}} te demande avant chaque outil, dans toutes tes discussions avec lui.",
-      "profile_mode_reads_hint": "{{name}} exécute seul les commandes en lecture seule et te demande pour le reste, dans toutes tes discussions avec lui. Choisis Normal pour approuver chaque étape.",
-      "profile_mode_trust_hint": "{{name}} exécute les outils sans te demander, dans toutes tes discussions avec lui. Choisis Normal pour approuver chaque étape.",
+      "profile_mode_normal_desc": "{{name}} te demande avant chaque outil, dans toutes tes discussions avec lui.",
+      "profile_mode_reads_desc": "{{name}} exécute seul les commandes en lecture seule et te demande pour le reste, dans toutes tes discussions avec lui.",
+      "profile_mode_trust_desc": "{{name}} exécute les outils sans te demander, dans toutes tes discussions avec lui.",
       "profile_model_inherited_hint": "Utilise {{model}}, le modèle par défaut de l'équipe",
       "profile_worker_model": "Modèle des workers",
       "profile_worker_effort": "Effort de raisonnement des workers",
@@ -19073,7 +19107,6 @@
       "create_advanced_settings": "Paramètres avancés",
       "dashboard_locked_badge": "Mise en page verrouillée — déverrouiller dans Profil",
       "dashboard_locked_badge_label": "Mise en page du tableau de bord verrouillée. Déverrouille-la dans l'onglet Profil.",
-      "profile_dashboard": "Tableau de bord",
       "profile_dashboard_lock_switch": "Verrouiller la mise en page du tableau de bord",
       "profile_dashboard_lock_hint": "Tant que c'est verrouillé, {{name}} ne peut pas remplacer son tableau de bord par une autre disposition ni en restaurer une plus ancienne. Les valeurs affichées continuent de se mettre à jour.",
       "profile_dashboard_lock_failed": "Impossible de verrouiller le tableau de bord. Il reste déverrouillé. Réessaie.",
@@ -19408,7 +19441,8 @@
   },
   "utils": {
     "agentSwitchFeedback": {
-      "turn_in_flight": "Un tour est en cours — réessayez quand il sera terminé."
+      "turn_in_flight": "Un tour est en cours — réessayez quand il sera terminé.",
+      "model_deferred": "{{model}} prend le relais à partir de ton prochain message. Cette réponse se termine avec le modèle avec lequel elle a commencé."
     },
     "channelOrigin": {
       "direct_message": "Message privé"
@@ -19771,6 +19805,9 @@
     "read_only": "Lecture seule",
     "built_from_headline": "Basé sur",
     "built_from_body": "Les outils, serveurs MCP et compétences de ce coéquipier proviennent de ce modèle — voir les onglets ci-dessus pour le détail. Ils sont hérités et ne peuvent pas être modifiés ici ; modifie le modèle sur la page Agents, ou bascule ce coéquipier vers un autre dans Général.",
+    "built_from_mate_hint": "Le kit du travailleur de ce coéquipier est une copie de ce modèle. Pour passer à un autre modèle ou prendre la dernière version de celui-ci, ouvre Avancé.",
+    "built_from_body_mate": "Le kit du travailleur de ce coéquipier est une copie de ce modèle, donc modifier le modèle ne le change pas. Pour passer à un autre modèle ou prendre la dernière version de celui-ci, ouvre Avancé.",
+    "open_advanced": "Ouvrir Avancé",
     "template_unavailable": "Ce modèle n’est pas installé sur cette machine pour l’instant ; le coéquipier revient donc aux valeurs par défaut. Installe ou restaure {{name}} pour lui rendre toutes ses capacités.",
     "template_authored": "Tu as créé ce modèle, tu peux donc le modifier directement sur la page Agents.",
     "schedules_heading": "Planifications",
@@ -19818,5 +19855,34 @@
     "server_allow_aria": "Autoriser {{server}}",
     "server_no_verbs": "Aucun outil approuvé automatiquement",
     "server_glob_covered": "Approuvé automatiquement dans son ensemble — désactive le serveur pour choisir les outils un par un"
+  },
+  "crewWorkerKit": {
+    "section_advanced": "Avancé",
+    "loading": "Chargement du kit du travailleur…",
+    "title": "Kit supplémentaire du travailleur",
+    "body": "{{name}} confie le travail à un travailleur. Choisis un modèle d'agent pour copier ses instructions, connexions, compétences et approbations automatiques dans ce travailleur. La copie n'a lieu qu'une fois : les modifications ultérieures du modèle ne l'atteignent pas.",
+    "copied_from": "Copié depuis {{template}}",
+    "copied_from_own_copy": "Copié depuis sa propre copie d'un modèle",
+    "none_copied": "Aucun modèle copié pour l'instant",
+    "template_label": "Modèle",
+    "pick_template": "Choisir un modèle",
+    "keep_additions": "Conserver ce qui a été ajouté depuis la dernière copie",
+    "copy": "Copier dans le travailleur",
+    "recopy": "Recopier depuis le modèle",
+    "preview_title": "Copier {{template}} apporterait ces modifications",
+    "no_changes": "Rien ne changerait.",
+    "section_prompt": "Instructions",
+    "section_mcp": "Connexion",
+    "section_skill": "Compétence",
+    "section_approval": "Approbation automatique",
+    "section_excluded": "Désactivé",
+    "skills_in_folder": "Compétences dans {{folder}}",
+    "approval_tool_on_server": "{{tool}} sur {{server}}",
+    "approval_every_tool": "Tous les outils de {{server}}",
+    "change_added": "Ajouté",
+    "change_removed": "Supprimé",
+    "change_changed": "Modifié",
+    "cancel": "Annuler",
+    "apply": "Appliquer"
   }
 }

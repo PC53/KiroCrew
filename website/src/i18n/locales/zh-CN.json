@@ -3148,6 +3148,7 @@
         "highlight_4": "在提交任何内容之前先审阅提取出的行动项 — 噪音归档，其余提交",
         "highlight_5": "任务和日历提供方可插拔：内置本地任务账本和 iCalendar（.ics）读取器，组织也可以注册自己的实现",
         "highlight_6": "会议进行时，逐行用另一种语言读回转录内容",
+        "highlight_7": "在智能体笔记旁边记录你自己的笔记 — 粘贴截图后会附上会议进行到的时间",
         "page_label": "会议"
       },
       "meeting": {
@@ -3172,6 +3173,7 @@
         "start": "开始",
         "toggleTasks": "行动项",
         "titleLabel": "会议标题",
+        "toggleNote": "我的笔记",
         "toggleTranslation": "翻译",
         "unpause": "继续"
       },
@@ -3249,7 +3251,10 @@
         "anotherMeetingActiveNamed": "“{{title}}”仍在进行。请在会议中打开它，先选择“结束并复核”。",
         "anotherMeetingReviewing": "“{{title}}”仍在复核中。请在会议中打开它，先选择“关闭会议”。",
         "sttStreamingDisabled": "实时转写已关闭。请在 设置 → 语音 中确认已启用语音输入、所选提供方支持流式传输，并已开启流式传输。",
-        "openVoiceSettings": "打开语音设置"
+        "openVoiceSettings": "打开语音设置",
+        "noteSaveFailed": "无法保存你的笔记。",
+        "noteImageFailed": "无法添加该图片。请粘贴 PNG、JPEG、GIF 或 WebP。",
+        "noteImageTooLarge": "该图片太大，无法添加到笔记中。"
       },
       "settings": {
         "addTerm": "添加",
@@ -3325,6 +3330,22 @@
         "chat": "对话",
         "html": "图示",
         "markdown": "笔记"
+      },
+      "note": {
+        "title": "我的笔记",
+        "close": "关闭笔记",
+        "placeholder": "在此记下你自己的笔记。支持 Markdown。",
+        "saving": "正在保存…",
+        "unsaved": "有未保存的更改",
+        "saved": "已保存",
+        "hint": "输入时自动保存。",
+        "editorLabel": "笔记内容",
+        "preview": "预览",
+        "edit": "编辑",
+        "uploading": "正在添加图片…",
+        "loading": "正在加载你的笔记…",
+        "loadFailed": "无法从磁盘读取你的笔记。为避免覆盖，编辑已暂停——关闭并重新打开面板即可重试。",
+        "paused": "编辑已暂停"
       }
     },
     "mochi": {
@@ -6248,7 +6269,6 @@
       "stop_generation": "停止生成",
       "stop_recording": "停止录音",
       "stop_the_current_response_to_switch_agents": "停止当前回复以切换代理",
-      "stop_the_current_response_to_switch_model": "停止当前回复以切换模型",
       "stopping": "正在停止…",
       "stopping_2": "正在停止",
       "switch_not_confirmed": "切换尚未确认——连接恢复后将自动生效。",
@@ -6293,6 +6313,7 @@
       "compacting_context_stop_unavailable": "正在压缩上下文，完成前无法停止",
       "click_again_to_force_stop_resets_session": "再次点击强制停止（会重启会话；你的消息会保留，助手保留最近的一段摘录）",
       "model_inherited_default": "此会话运行在默认模型（{{name}}）上。它没有自己的模型，因此默认模型变化时它也会变化。点击可固定一个。",
+      "model_switch_applies_next_turn": "你下一条消息会用你选的模型。这条回复会用开始时的模型完成。",
       "terminal_attachments": "运行终端命令前，请移除附件。",
       "terminal_folder_attachments": "运行前先移除文件夹附件。移除文件夹也会移除命令中对应的 {{folderRef}} 引用。",
       "terminal_default_directory": "终端启动目录",
@@ -10162,6 +10183,10 @@
       "stream_error_vocabulary_rejected": "Amazon Transcribe 无法使用你的自定义词汇表。在语音转文字设置中选择其他词汇表或“无”，然后重试。",
       "stream_error_sdk_outdated": "混合语言需要 gateway 中的 amazon-transcribe 为 0.6.3 或更高版本。请用 gateway 日志中的命令升级，或在语音转文字设置中清空混合语言，然后重试。"
     },
+    "speechProviders": {
+      "unavailable_no_reason": "此提供方目前无法运行。",
+      "sign_in_hint": "请使用你的 {{account}} 登录以使用它。"
+    },
     "templateSource": {
       "built_in": "内置",
       "package": "包",
@@ -12005,7 +12030,8 @@
       },
       "messageContextMenu": {
         "copy_link_text": "复制链接文本",
-        "copy_link_address": "复制链接地址"
+        "copy_link_address": "复制链接地址",
+        "open_link_new_tab": "在新标签页中打开链接"
       },
       "dashboardPreviewPanel": {
         "tab_title": "{{name}}（预览）",
@@ -13455,6 +13481,9 @@
       "save_changes": "保存更改",
       "session_color_hint_member": "这位队友发起的会话使用此颜色，除非会话自身设置了颜色。留空则这位队友无颜色。",
       "shared_lower": "共用",
+      "memory_label_private": "这位队友专用",
+      "memory_label_shared": "共用",
+      "memory_label_check": "打开查看",
       "shown_across_the_dashboard_instead_of_the_name_l": "在整个面板中代替名称（{{name}}）显示。留空则显示名称本身。",
       "subdirectory_inside_kiro_crew_where_this_workspa": "~/.kiro/crew 下用于存放此工作区数据（聊天历史、经验、项目）的子目录。每个工作区都有各自独立的目录。",
       "triggers": "Triggers",
@@ -17228,6 +17257,7 @@
         "unavailable_disabled": "语音转文字已关闭。请在上方将其打开。",
         "status_provider_off": "未在监听",
         "status_not_working": "无法工作",
+        "status_unavailable_provider": "不可用",
         "unavailable_provider_off": "语音已开启，但提供方已设为“关闭”，因此没有在监听。请在下方的“提供方”菜单中选择另一个提供方。",
         "unavailable_extra_missing": "语音相关软件包未安装在 gateway 的 Python 环境中。",
         "unavailable_no_wheel": "此平台没有预编译的语音识别组件。请先安装 C++ 编译器和 CMake，然后重新安装语音软件包。",
@@ -18313,6 +18343,7 @@
       "empty_title": "还没有队友",
       "empty_body": "你的 AI 队友。交给它一项工作，你不在时它也会继续做。",
       "built_from_default": "{{agent}}（默认）",
+      "built_from_own_copy": "它自己的副本",
       "built_from_hint": "它复制的起始配置：工具、连接和指令。{{agent}} 是标准配置。之后可以更改。",
       "create_name": "名称",
       "create_name_placeholder": "例如 Radar 或 Dr. Eggbot",
@@ -18338,6 +18369,8 @@
       "add_member_settling": "正在完成 {{name}} 的第一条消息，然后才能添加另一位队友。",
       "create_options_failed": "无法加载“{{list}}”的选项，已显示默认值。",
       "welcome_title": "这是我之前在做的工作",
+      "entrance_first_mate": "嗨！我是你的第一位队友。",
+      "entrance_hello": "嗨！我是 {{name}}。",
       "welcome_paused": "已暂停：{{goal}}",
       "welcome_paused_next": "已暂停：{{goal}}（下一步：{{next}}）",
       "welcome_recent": "最近的会话，可能已完成：{{title}}",
@@ -18429,12 +18462,13 @@
       "profile_sessions_tab": "会话",
       "profile_goals_tab": "目标",
       "profile_permissions": "权限",
+      "profile_settings": "设置",
       "profile_effort_hint": "级别越高，思考越久、回答越慢、费用越高。",
       "profile_settings_waiting": "和这位队友的对话打开后才能更改。",
       "profile_permission_changed": "权限已在别处更改。这是当前设置。",
-      "profile_mode_normal_hint": "{{name}} 每次使用工具前都会先问你，适用于和它的所有对话。",
-      "profile_mode_reads_hint": "{{name}} 会自行运行只读命令，其余操作会先问你，适用于和它的所有对话。选择“常规”可逐步批准。",
-      "profile_mode_trust_hint": "{{name}} 会直接运行工具，不先问你，适用于和它的所有对话。选择“常规”可逐步批准。",
+      "profile_mode_normal_desc": "{{name}} 每次使用工具前都会先问你，适用于和它的所有对话。",
+      "profile_mode_reads_desc": "{{name}} 会自行运行只读命令，其余操作会先问你，适用于和它的所有对话。",
+      "profile_mode_trust_desc": "{{name}} 会直接运行工具，不先问你，适用于和它的所有对话。",
       "profile_model_inherited_hint": "正在使用 {{model}}，即团队默认模型",
       "profile_worker_model": "工作会话模型",
       "profile_worker_effort": "工作会话推理强度",
@@ -18491,7 +18525,6 @@
       "create_advanced_settings": "高级设置",
       "dashboard_locked_badge": "布局已锁定 — 在个人资料中解锁",
       "dashboard_locked_badge_label": "仪表板布局已锁定。请在个人资料选项卡上解锁。",
-      "profile_dashboard": "仪表板",
       "profile_dashboard_lock_switch": "锁定仪表板布局",
       "profile_dashboard_lock_hint": "锁定期间，{{name}} 无法将其仪表板换成其他布局，也无法恢复旧布局。上面的数值会继续更新。",
       "profile_dashboard_lock_failed": "无法锁定仪表板。它仍未锁定。请重试。",
@@ -18824,7 +18857,8 @@
   },
   "utils": {
     "agentSwitchFeedback": {
-      "turn_in_flight": "当前有一轮对话正在进行 — 等它结束后再试。"
+      "turn_in_flight": "当前有一轮对话正在进行 — 等它结束后再试。",
+      "model_deferred": "{{model}} 从你的下一条消息开始接手。这条回复会用开始时的模型完成。"
     },
     "channelOrigin": {
       "direct_message": "私信"
@@ -19185,6 +19219,9 @@
     "read_only": "只读",
     "built_from_headline": "构建来源",
     "built_from_body": "此队友的工具、MCP 服务器和技能来自该模板——具体包含哪些请查看上方的标签页。这些是继承而来的，无法在此更改；在“代理”页面编辑模板，或在“常规”中将此队友切换到其他模板。",
+    "built_from_mate_hint": "此队友的工作者工具包是这个模板的一份副本。要换成别的模板或取用这个模板的最新版本，请打开“高级”。",
+    "built_from_body_mate": "此队友的工作者工具包是这个模板的一份副本，所以编辑模板不会改变它。要换成别的模板或取用这个模板的最新版本，请打开“高级”。",
+    "open_advanced": "打开“高级”",
     "template_unavailable": "该模板目前未安装在此机器上，因此此队友回退到默认配置。安装或恢复 {{name}} 以恢复其全部能力。",
     "template_authored": "这个模板是你编写的，你可以在“代理”页面直接编辑它。",
     "schedules_heading": "定时任务",
@@ -19232,5 +19269,34 @@
     "server_allow_aria": "允许 {{server}}",
     "server_no_verbs": "没有自动批准的工具",
     "server_glob_covered": "作为整体自动批准 — 关闭该服务器可逐个选择工具"
+  },
+  "crewWorkerKit": {
+    "section_advanced": "高级",
+    "loading": "正在加载工作者套件…",
+    "title": "工作者的附加套件",
+    "body": "{{name}} 会把工作交给一个工作者。选择一个代理模板，把它的指令、连接、技能和自动批准复制到这个工作者中。只复制一次：之后对模板的修改不会同步过来。",
+    "copied_from": "复制自 {{template}}",
+    "copied_from_own_copy": "复制自它自己的模板副本",
+    "none_copied": "尚未复制任何模板",
+    "template_label": "模板",
+    "pick_template": "选择模板",
+    "keep_additions": "保留上次复制之后添加的内容",
+    "copy": "复制到工作者",
+    "recopy": "从模板重新复制",
+    "preview_title": "复制 {{template}} 会做出以下更改",
+    "no_changes": "不会有任何更改。",
+    "section_prompt": "指令",
+    "section_mcp": "连接",
+    "section_skill": "技能",
+    "section_approval": "自动批准",
+    "section_excluded": "已关闭",
+    "skills_in_folder": "{{folder}} 中的技能",
+    "approval_tool_on_server": "{{server}} 上的 {{tool}}",
+    "approval_every_tool": "{{server}} 的所有工具",
+    "change_added": "已添加",
+    "change_removed": "已移除",
+    "change_changed": "已更改",
+    "cancel": "取消",
+    "apply": "应用"
   }
 }

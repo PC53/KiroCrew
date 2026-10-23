@@ -29,7 +29,7 @@ a pack may ship. Validation is tier-scaled to payload trust.
 | Tier | `level` | Surface unlocked |
 |---|---|---|
 | **L0 Color** | 0 | the 56 theme CSS variables (dark + light) only |
-| **L1 Branded** | 1 | + `branding/` (logo, favicon, wordmark), `styles/fonts/`, scoped `overrides.css`, `loader/*.png\|webp\|gif\|svg` |
+| **L1 Branded** | 1 | + `branding/` (logo, favicon, wordmark, welcome), `styles/fonts/`, scoped `overrides.css`, `loader/*.png\|webp\|gif\|svg` |
 | **L2 Experience** | 2 | + `overlays/` + `topbar/` sandboxed HTML, `audio/`, `persona.md` |
 
 Level-1 and Level-2 manifests may also declare `loaderIcons`: 4–8 distinct
@@ -53,6 +53,13 @@ static/animated mode: no scripts, no external loads, animation still plays), so
 it needs no HTML-serving route of its own. The frontend
 `resolveLoader` precedence is: compiled `loader` → pack images (one on its own,
 2–8 cycled) → `loaderIcons` (manifest, then compiled) → the default poses.
+
+The empty chat's welcome screen (`WelcomeView`) has one brand-mark slot, and a
+Level-1 pack fills it with `branding/welcome.svg|png|webp|gif` (256 KB, served
+and rendered like the loader art, so an animated image plays in place).
+Precedence: compiled `registerThemeBranding()` `logo` → pack welcome image →
+pack `logo` → the stock ghost. So a pack that ships only a logo shows it there
+too, matching the left rail.
 
 Constants (`dashboard/theme_validate.py`): `_THEME_MAX_LEVEL=2`,
 `_THEME_MAX_FONTS=6`, `_THEME_MAX_OVERLAYS=5`, `_THEME_PERSONA_MAX_CHARS=2000`,
@@ -270,8 +277,8 @@ dashboard load into header-only round trips.
   `capabilities.theme_persona` governance capability (`SCOPE_CATALOG`,
   `capability_default=True`): standalone it defaults to allow, but an
   enterprise POLICY can force-disable installed-pack persona injection
-  wholesale (consulted at the `chat_runner.py` injection site; a denying policy
-  skips injection silently). See `governance.md`.
+  wholesale (consulted at the injection site in `_turn_build_prompt`,
+  `chat_turn/prompt_assembly.py`; a denying policy skips injection silently). See `governance.md`.
 
 ## Frontend Integration Points
 

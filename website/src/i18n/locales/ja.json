@@ -3236,6 +3236,7 @@
         "highlight_4": "抽出したアクションアイテムを確認してからファイリング—ノイズはアーカイブし、残りをファイル",
         "highlight_5": "プラグ可能なタスクとカレンダープロバイダ。ローカルタスク台帳とiCalendar(.ics)リーダーが付属し、組織は独自のものを登録できます",
         "highlight_6": "ミーティングの進行中に、文字起こしを別の言語で 1 行ずつ読み返せます",
+        "highlight_7": "エージェントのノートと並べて自分のノートを残せます — スクリーンショットを貼り付けると、ミーティングの経過時間つきで記録されます",
         "page_label": "会議"
       },
       "meeting": {
@@ -3258,10 +3259,27 @@
         "resuming": "再開中…",
         "retryAgents": "再試行",
         "start": "開始",
+        "toggleNote": "マイノート",
         "toggleTasks": "アクションアイテム",
         "titleLabel": "ミーティングのタイトル",
         "toggleTranslation": "翻訳",
         "unpause": "再開"
+      },
+      "note": {
+        "close": "ノートを閉じる",
+        "edit": "編集",
+        "editorLabel": "ノートの本文",
+        "hint": "入力すると自動的に保存されます。",
+        "loadFailed": "ノートをディスクから読み取れませんでした。上書きを防ぐため編集を一時停止しています。パネルを閉じて開き直すと再試行します。",
+        "loading": "ノートを読み込み中…",
+        "paused": "編集を一時停止中",
+        "placeholder": "自分用のメモをここに入力します。Markdown が使えます。",
+        "preview": "プレビュー",
+        "saved": "保存済み",
+        "saving": "保存中…",
+        "title": "マイノート",
+        "unsaved": "未保存の変更",
+        "uploading": "画像を追加中…"
       },
       "pillBar": {
         "addLink": "リンクを追加",
@@ -3319,6 +3337,9 @@
         "minutesRevertFailed": "編集を破棄できませんでした。",
         "renameFailed": "ミーティングの名前を変更できませんでした。",
         "minutesSaveFailed": "編集を保存できませんでした。",
+        "noteImageFailed": "その画像を追加できませんでした。PNG、JPEG、GIF、WebP のいずれかを貼り付けてください。",
+        "noteImageTooLarge": "その画像は大きすぎてノートに追加できません。",
+        "noteSaveFailed": "ノートを保存できませんでした。",
         "startFailed": "ミーティングを開始できませんでした。",
         "started": "ミーティング開始。",
         "statusFailed": "ミーティングステータスを変更できませんでした。",
@@ -6248,7 +6269,6 @@
       "stop_generation": "生成を停止",
       "stop_recording": "録音を停止",
       "stop_the_current_response_to_switch_agents": "現在の応答を停止してエージェントを切り替え",
-      "stop_the_current_response_to_switch_model": "現在の応答を停止してモデルを切り替え",
       "stopping": "停止中…",
       "stopping_2": "停止中",
       "switch_not_confirmed": "切り替えはまだ確認されていません。接続が回復すると適用されます。",
@@ -6293,6 +6313,7 @@
       "compacting_context_stop_unavailable": "コンテキストを圧縮中 — 完了するまで停止できません",
       "click_again_to_force_stop_resets_session": "もう一度クリックして強制停止（セッションを再起動します。メッセージは残り、エージェントは最近の抜粋を保持します）",
       "model_inherited_default": "このセッションはデフォルトモデル（{{name}}）で動作します。独自のモデルを持たないため、デフォルトが変わると変わります。固定するにはクリックしてください。",
+      "model_switch_applies_next_turn": "次のメッセージは選んだモデルで実行されます。この返答は開始時のモデルのまま完了します。",
       "terminal_attachments": "ターミナルコマンドを実行する前に添付ファイルを削除してください。",
       "terminal_folder_attachments": "実行前に添付フォルダーを取り除く必要があります。フォルダーを取り除くと、コマンド内の {{folderRef}} 参照も消えます。",
       "terminal_default_directory": "ターミナル起動時のディレクトリ",
@@ -10162,6 +10183,10 @@
       "stream_error_vocabulary_rejected": "Amazon Transcribe でカスタム語彙を使用できませんでした。音声入力の設定で別の語彙か「なし」を選んでから、もう一度お試しください。",
       "stream_error_sdk_outdated": "複数言語を使うには、ゲートウェイに amazon-transcribe 0.6.3 以降が必要です。ゲートウェイのログにあるコマンドで更新するか、音声入力の設定で複数言語を空にしてから、もう一度お試しください。"
     },
+    "speechProviders": {
+      "unavailable_no_reason": "このプロバイダーは現在実行できません。",
+      "sign_in_hint": "使用するには {{account}} でサインインしてください。"
+    },
     "templateSource": {
       "built_in": "組み込み",
       "package": "パッケージ",
@@ -12005,7 +12030,8 @@
       },
       "messageContextMenu": {
         "copy_link_text": "リンクのテキストをコピー",
-        "copy_link_address": "リンクのアドレスをコピー"
+        "copy_link_address": "リンクのアドレスをコピー",
+        "open_link_new_tab": "リンクを新しいタブで開く"
       },
       "dashboardPreviewPanel": {
         "tab_title": "{{name}}（プレビュー）",
@@ -13455,6 +13481,9 @@
       "save_changes": "変更を保存",
       "session_color_hint_member": "このクルーメイトが開始するセッションは、セッション自体に色がない限りこの色を使います。空欄にするとクルーメイトの色はなしになります。",
       "shared_lower": "共有",
+      "memory_label_private": "このクルーメイト専用",
+      "memory_label_shared": "共有",
+      "memory_label_check": "開いて確認",
       "shown_across_the_dashboard_instead_of_the_name_l": "名前（{{name}}）の代わりにダッシュボード全体で表示されます。空にすると名前そのものが表示されます。",
       "subdirectory_inside_kiro_crew_where_this_workspa": "~/.kiro/crew内のサブディレクトリで、このワークスペースがそのデータ（チャット履歴、レッスン、プロジェクト）を保存します。各ワークスペースには独自の分離されたディレクトリがあります。",
       "triggers": "トリガー",
@@ -17228,6 +17257,7 @@
         "unavailable_disabled": "音声入力はオフになっています。上でオンにしてください。",
         "status_provider_off": "聞き取っていません",
         "status_not_working": "動作していません",
+        "status_unavailable_provider": "利用不可",
         "unavailable_provider_off": "音声はオンですが、プロバイダーがオフに設定されているため、何も聞き取っていません。下のプロバイダーメニューから別のプロバイダーを選択してください。",
         "unavailable_extra_missing": "音声用パッケージがゲートウェイの Python 環境にインストールされていません。",
         "unavailable_no_wheel": "このプラットフォーム向けのビルド済み音声認識エンジンはありません。C++ コンパイラーと CMake をインストールし、音声用パッケージを再インストールしてください。",
@@ -18313,6 +18343,7 @@
       "empty_title": "クルーメイトはまだいません",
       "empty_body": "あなたの AI チームメイトです。仕事を任せれば、あなたが離れている間も働き続けます。",
       "built_from_default": "{{agent}}（デフォルト）",
+      "built_from_own_copy": "独自のコピー",
       "built_from_hint": "コピー元となる初期セットアップ（ツール、接続、指示）。{{agent}} が標準のセットアップです。あとから変更できます。",
       "create_name": "名前",
       "create_name_placeholder": "例：Radar、Dr. Eggbot",
@@ -18338,6 +18369,8 @@
       "add_member_settling": "別のクルーメイトを追加する前に、{{name}} の最初のメッセージを完了しています。",
       "create_options_failed": "「{{list}}」の選択肢を読み込めませんでした。デフォルトを表示しています。",
       "welcome_title": "これまで取り組んでいた作業です",
+      "entrance_first_mate": "こんにちは！私はあなたの最初のクルーメイトです。",
+      "entrance_hello": "こんにちは！私は {{name}} です。",
       "welcome_paused": "一時停止中: {{goal}}",
       "welcome_paused_next": "一時停止中: {{goal}}（次の手順: {{next}}）",
       "welcome_recent": "最近のセッション(完了済みの可能性あり): {{title}}",
@@ -18429,12 +18462,13 @@
       "profile_sessions_tab": "セッション",
       "profile_goals_tab": "目標",
       "profile_permissions": "権限",
+      "profile_settings": "設定",
       "profile_effort_hint": "レベルが高いほど長く考え、応答が遅くなり、費用も増えます。",
       "profile_settings_waiting": "このクルーメイトとのチャットが開くと変更できます。",
       "profile_permission_changed": "権限はほかの場所で変更されました。これが現在の設定です。",
-      "profile_mode_normal_hint": "{{name}} はツールを使う前に毎回確認します。このクルーメイトとのすべてのチャットに適用されます。",
-      "profile_mode_reads_hint": "{{name}} は読み取り専用のコマンドを自動で実行し、それ以外は確認します。すべてのチャットに適用されます。各ステップを承認するには「標準」を選びます。",
-      "profile_mode_trust_hint": "{{name}} は確認せずにツールを実行します。このクルーメイトとのすべてのチャットに適用されます。各ステップを承認するには「標準」を選びます。",
+      "profile_mode_normal_desc": "{{name}} はツールを使う前に毎回確認します。このクルーメイトとのすべてのチャットに適用されます。",
+      "profile_mode_reads_desc": "{{name}} は読み取り専用のコマンドを自動で実行し、それ以外は確認します。すべてのチャットに適用されます。",
+      "profile_mode_trust_desc": "{{name}} は確認せずにツールを実行します。このクルーメイトとのすべてのチャットに適用されます。",
       "profile_model_inherited_hint": "{{model}} を使用中（クルーの既定）",
       "profile_worker_model": "ワーカーのモデル",
       "profile_worker_effort": "ワーカーの推論の深さ",
@@ -18491,7 +18525,6 @@
       "create_advanced_settings": "詳細設定",
       "dashboard_locked_badge": "レイアウトがロック中 — プロフィールで解除",
       "dashboard_locked_badge_label": "ダッシュボードのレイアウトはロックされています。プロフィールタブでロックを解除してください。",
-      "profile_dashboard": "ダッシュボード",
       "profile_dashboard_lock_switch": "ダッシュボードのレイアウトをロック",
       "profile_dashboard_lock_hint": "ロック中、{{name}} はダッシュボードを別のレイアウトに置き換えたり、以前のものに戻したりできません。表示される値は引き続き更新されます。",
       "profile_dashboard_lock_failed": "ダッシュボードをロックできませんでした。ロックされていないままです。もう一度お試しください。",
@@ -18824,7 +18857,8 @@
   },
   "utils": {
     "agentSwitchFeedback": {
-      "turn_in_flight": "ターンが進行中です — 完了してからもう一度お試しください。"
+      "turn_in_flight": "ターンが進行中です — 完了してからもう一度お試しください。",
+      "model_deferred": "{{model}} は次のメッセージから引き継ぎます。この返答は開始時のモデルのまま完了します。"
     },
     "channelOrigin": {
       "direct_message": "ダイレクトメッセージ"
@@ -19185,6 +19219,9 @@
     "read_only": "読み取り専用",
     "built_from_headline": "ベース",
     "built_from_body": "このクルーメイトのツール、MCP サーバー、スキルはこのテンプレートに由来します。何が含まれるかは上のタブで確認してください。これらは継承されており、ここでは変更できません。テンプレートは「エージェント」ページで編集し、別のテンプレートへの切り替えは「一般」で行います。",
+    "built_from_mate_hint": "このクルーメイトのワーカーキットはこのテンプレートのコピーです。別のテンプレートに切り替えるか、このテンプレートの最新版を取り込むには、「詳細設定」を開いてください。",
+    "built_from_body_mate": "このクルーメイトのワーカーキットはこのテンプレートのコピーなので、テンプレートを編集しても変わりません。別のテンプレートに切り替えるか、このテンプレートの最新版を取り込むには、「詳細設定」を開いてください。",
+    "open_advanced": "「詳細設定」を開く",
     "template_unavailable": "このテンプレートは現在このマシンにインストールされていないため、クルーメイトは既定値にフォールバックします。{{name}} をインストールまたは復元すると、全機能が戻ります。",
     "template_authored": "このテンプレートはあなたが作成したので、「エージェント」ページで直接編集できます。",
     "schedules_heading": "スケジュール",
@@ -19232,5 +19269,34 @@
     "server_allow_aria": "{{server}} を許可",
     "server_no_verbs": "自動承認されたツールはありません",
     "server_glob_covered": "全体として自動承認 — ツールを個別に選ぶにはサーバーをオフにしてください"
+  },
+  "crewWorkerKit": {
+    "section_advanced": "詳細設定",
+    "loading": "ワーカーキットを読み込み中…",
+    "title": "ワーカーの追加キット",
+    "body": "{{name}} は作業をワーカーに任せます。エージェントテンプレートを 1 つ選ぶと、その指示・接続・スキル・自動承認がワーカーにコピーされます。コピーは一度だけで、その後のテンプレートの変更は反映されません。",
+    "copied_from": "{{template}} からコピー済み",
+    "copied_from_own_copy": "テンプレートの独自コピーからコピー済み",
+    "none_copied": "まだテンプレートはコピーされていません",
+    "template_label": "テンプレート",
+    "pick_template": "テンプレートを選択",
+    "keep_additions": "前回のコピー以降に追加したものを残す",
+    "copy": "ワーカーにコピー",
+    "recopy": "テンプレートから再コピー",
+    "preview_title": "{{template}} をコピーすると次の変更が行われます",
+    "no_changes": "変更はありません。",
+    "section_prompt": "指示",
+    "section_mcp": "接続",
+    "section_skill": "スキル",
+    "section_approval": "自動承認",
+    "section_excluded": "オフ",
+    "skills_in_folder": "{{folder}} 内のスキル",
+    "approval_tool_on_server": "{{server}} の {{tool}}",
+    "approval_every_tool": "{{server}} のすべてのツール",
+    "change_added": "追加",
+    "change_removed": "削除",
+    "change_changed": "変更",
+    "cancel": "キャンセル",
+    "apply": "適用"
   }
 }

@@ -3282,6 +3282,7 @@
         "highlight_4": "Revise os itens de ação extraídos antes de qualquer registro — arquive o ruído, registre o resto",
         "highlight_5": "Provedores de tarefas e de calendário conectáveis: já inclui um registro local de tarefas e um leitor de iCalendar (.ics), e uma organização pode registrar os seus próprios",
         "highlight_6": "Leia a transcrição linha a linha em outro idioma enquanto a reunião acontece",
+        "highlight_7": "Mantenha suas próprias notas ao lado das dos agentes — cole uma captura de tela e ela entra com o tempo decorrido da reunião",
         "page_label": "Reuniões",
         "use_case_1": "Capture uma reunião ao vivo enquanto agentes paralelos produzem a transcrição, notas estruturadas, diagrama e revisão dos itens de ação.",
         "configuration_1": "Permita que o navegador acesse o microfone para a captura ao vivo; configure opcionalmente em Configurações um caminho ou URL do iCalendar, o ledger local de tarefas, papéis de agente e termos de correção de fala."
@@ -3308,6 +3309,7 @@
         "start": "Começar",
         "toggleTasks": "Tarefas",
         "titleLabel": "Título da reunião",
+        "toggleNote": "A minha nota",
         "toggleTranslation": "Tradução",
         "unpause": "Retomar"
       },
@@ -3389,7 +3391,10 @@
         "anotherMeetingActiveNamed": "“{{title}}” ainda está a decorrer. Abra-a em Reuniões e escolha primeiro “Terminar e revisar”.",
         "anotherMeetingReviewing": "“{{title}}” ainda está em revisão. Abra-a em Reuniões e escolha primeiro “Fechar a reunião”.",
         "sttStreamingDisabled": "A transcrição ao vivo está desativada. Em Configurações → Voz, verifique se a entrada de voz está ativada, se o provedor suporta streaming e se Streaming está ativado.",
-        "openVoiceSettings": "Abrir configurações de voz"
+        "openVoiceSettings": "Abrir configurações de voz",
+        "noteSaveFailed": "Não foi possível guardar a sua nota.",
+        "noteImageFailed": "Não foi possível adicionar essa imagem. Cole um PNG, JPEG, GIF ou WebP.",
+        "noteImageTooLarge": "Essa imagem é demasiado grande para uma nota."
       },
       "settings": {
         "addTerm": "Adicionar",
@@ -3467,6 +3472,22 @@
         "chat": "Conversa",
         "html": "Diagrama",
         "markdown": "Notas"
+      },
+      "note": {
+        "title": "A minha nota",
+        "close": "Fechar a nota",
+        "placeholder": "Escreva aqui as suas notas. O Markdown é suportado.",
+        "saving": "A guardar…",
+        "unsaved": "Alterações não guardadas",
+        "saved": "Guardada",
+        "hint": "É guardada automaticamente enquanto escreve.",
+        "editorLabel": "Texto da nota",
+        "preview": "Pré-visualizar",
+        "edit": "Editar",
+        "uploading": "A adicionar a imagem…",
+        "loading": "A carregar a sua nota…",
+        "loadFailed": "Não foi possível ler a sua nota do disco. A edição está em pausa para não substituir nada: feche e volte a abrir o painel para tentar novamente.",
+        "paused": "Edição em pausa"
       }
     },
     "mochi": {
@@ -6472,7 +6493,6 @@
       "stop_generation": "Parar geração",
       "stop_recording": "Parar gravação",
       "stop_the_current_response_to_switch_agents": "Pare a resposta atual para trocar de agente",
-      "stop_the_current_response_to_switch_model": "Pare a resposta atual para trocar de modelo",
       "stopping": "Parando…",
       "stopping_2": "Parando",
       "switch_not_confirmed": "Troca ainda não confirmada — será aplicada se a conexão for restaurada.",
@@ -6517,6 +6537,7 @@
       "compacting_context_stop_unavailable": "Compactando o contexto — não é possível parar até terminar",
       "click_again_to_force_stop_resets_session": "Clique novamente para forçar a parada (reinicia a sessão; suas mensagens ficam, o agente mantém um trecho recente)",
       "model_inherited_default": "Esta sessão usa o modelo padrão ({{name}}). Não tem um modelo próprio, então muda se o padrão mudar. Clique para fixar um.",
+      "model_switch_applies_next_turn": "Sua próxima mensagem usará o modelo que você escolher. Esta resposta termina com o modelo com que começou.",
       "terminal_attachments": "Remova os anexos antes de executar um comando de terminal.",
       "terminal_folder_attachments": "Remova as pastas anexadas antes de executar o comando. Ao remover uma pasta, a referência {{folderRef}} dela também é removida do comando.",
       "terminal_default_directory": "Diretório inicial do terminal",
@@ -10452,6 +10473,10 @@
       "stream_error_vocabulary_rejected": "O Amazon Transcribe não conseguiu usar seu vocabulário personalizado. Escolha outro, ou Nenhum, nas configurações de voz para texto e tente novamente.",
       "stream_error_sdk_outdated": "Idiomas misturados precisam do amazon-transcribe 0.6.3 ou mais recente no gateway. Atualize-o com o comando do log do gateway, ou limpe Idiomas misturados nas configurações de voz para texto, e tente novamente."
     },
+    "speechProviders": {
+      "unavailable_no_reason": "Este provedor não pode ser executado agora.",
+      "sign_in_hint": "Entre com sua {{account}} para usá-lo."
+    },
     "templateSource": {
       "built_in": "Integrado",
       "package": "Pacote",
@@ -12371,7 +12396,8 @@
       },
       "messageContextMenu": {
         "copy_link_text": "Copiar texto do link",
-        "copy_link_address": "Copiar endereço do link"
+        "copy_link_address": "Copiar endereço do link",
+        "open_link_new_tab": "Abrir link em nova aba"
       },
       "dashboardPreviewPanel": {
         "tab_title": "{{name}} (pré-visualização)",
@@ -13893,6 +13919,9 @@
       "save_changes": "Salvar alterações",
       "session_color_hint_member": "As sessões que este colega inicia usam esta cor, a menos que a sessão tenha a sua própria. Deixe em branco para nenhuma cor de colega.",
       "shared_lower": "em comum",
+      "memory_label_private": "Só deste colega",
+      "memory_label_shared": "Em comum",
+      "memory_label_check": "Abra para conferir",
       "shown_across_the_dashboard_instead_of_the_name_l": "Exibido em todo o painel no lugar do nome ({{name}}). Deixe vazio para mostrar o próprio nome.",
       "subdirectory_inside_kiro_crew_where_this_workspa": "Subdiretório dentro de ~/.kiro/crew onde este workspace armazena seus dados (histórico de chat, lições, projetos). Cada workspace tem seu próprio diretório isolado.",
       "triggers": "Triggers",
@@ -17770,6 +17799,7 @@
         "unavailable_disabled": "A transcrição de voz está desativada. Ative-a acima.",
         "status_provider_off": "Não está ouvindo",
         "status_not_working": "não está funcionando",
+        "status_unavailable_provider": "indisponível",
         "unavailable_provider_off": "A voz está ativada, mas o provedor está definido como Desativado, então nada está ouvindo. Escolha outro provedor no menu Provedor abaixo.",
         "unavailable_extra_missing": "Os pacotes de voz não estão instalados no ambiente Python do gateway.",
         "unavailable_no_wheel": "Não existe um reconhecedor de voz pré-compilado para esta plataforma. Instale um compilador C++ e o CMake e reinstale os pacotes de voz.",
@@ -18887,6 +18917,7 @@
       "empty_title": "Ainda não há colegas",
       "empty_body": "Seu colega de equipe com IA. Dê a ele um trabalho; ele continua trabalhando enquanto você está fora.",
       "built_from_default": "{{agent}} (padrão)",
+      "built_from_own_copy": "Sua própria cópia",
       "built_from_hint": "A configuração inicial que ele copia: ferramentas, conexões e instruções. {{agent}} é a configuração padrão. Você pode mudar depois.",
       "create_name": "Nome",
       "create_name_placeholder": "ex.: Radar ou Dr. Eggbot",
@@ -18912,6 +18943,8 @@
       "add_member_settling": "Concluindo a primeira mensagem de {{name}} antes de adicionar outro companheiro.",
       "create_options_failed": "Não foi possível carregar as opções de “{{list}}”; o padrão é exibido.",
       "welcome_title": "Isto é o que eu estava fazendo",
+      "entrance_first_mate": "Oi! Sou seu primeiro companheiro.",
+      "entrance_hello": "Oi! Sou {{name}}.",
       "welcome_paused": "Em pausa: {{goal}}",
       "welcome_paused_next": "Em pausa: {{goal}} (próximo passo: {{next}})",
       "welcome_recent": "Sessão recente, pode estar concluída: {{title}}",
@@ -19011,12 +19044,13 @@
       "profile_sessions_tab": "Sessões",
       "profile_goals_tab": "Metas",
       "profile_permissions": "Permissões",
+      "profile_settings": "Configurações",
       "profile_effort_hint": "Níveis mais altos pensam mais, respondem mais devagar e custam mais.",
       "profile_settings_waiting": "Dá para mudar quando o chat com este colega estiver aberto.",
       "profile_permission_changed": "A permissão mudou em outro lugar. Esta é a configuração atual.",
-      "profile_mode_normal_hint": "{{name}} pergunta antes de cada ferramenta, em todos os chats com ele.",
-      "profile_mode_reads_hint": "{{name}} executa sozinho comandos somente leitura e pergunta pelo resto, em todos os chats com ele. Escolha Normal para aprovar cada passo.",
-      "profile_mode_trust_hint": "{{name}} executa ferramentas sem perguntar antes, em todos os chats com ele. Escolha Normal para aprovar cada passo.",
+      "profile_mode_normal_desc": "{{name}} pergunta antes de cada ferramenta, em todos os chats com ele.",
+      "profile_mode_reads_desc": "{{name}} executa sozinho comandos somente leitura e pergunta pelo resto, em todos os chats com ele.",
+      "profile_mode_trust_desc": "{{name}} executa ferramentas sem perguntar antes, em todos os chats com ele.",
       "profile_model_inherited_hint": "Usando {{model}}, o padrão da equipe",
       "profile_worker_model": "Modelo dos workers",
       "profile_worker_effort": "Esforço de raciocínio dos workers",
@@ -19073,7 +19107,6 @@
       "create_advanced_settings": "Configurações avançadas",
       "dashboard_locked_badge": "Layout bloqueado — desbloquear em Perfil",
       "dashboard_locked_badge_label": "Layout do painel bloqueado. Desbloqueie-o na guia Perfil.",
-      "profile_dashboard": "Painel",
       "profile_dashboard_lock_switch": "Bloquear o layout do painel",
       "profile_dashboard_lock_hint": "Enquanto bloqueado, {{name}} não pode substituir o painel por outro layout nem restaurar um anterior. Os valores exibidos continuam a ser atualizados.",
       "profile_dashboard_lock_failed": "Não foi possível bloquear o painel. Ele continua desbloqueado. Tente novamente.",
@@ -19408,7 +19441,8 @@
   },
   "utils": {
     "agentSwitchFeedback": {
-      "turn_in_flight": "Um turno está em andamento — tente novamente quando ele terminar."
+      "turn_in_flight": "Um turno está em andamento — tente novamente quando ele terminar.",
+      "model_deferred": "{{model}} assume a partir da sua próxima mensagem. Esta resposta termina com o modelo com que começou."
     },
     "channelOrigin": {
       "direct_message": "Mensagem direta"
@@ -19771,6 +19805,9 @@
     "read_only": "Somente leitura",
     "built_from_headline": "Baseado em",
     "built_from_body": "As ferramentas, os servidores MCP e as habilidades deste colega vêm deste modelo — veja as abas acima para saber exatamente o que inclui. São herdadas e não podem ser alteradas aqui; edite o modelo na página de Agentes ou troque este colega por outro em Geral.",
+    "built_from_mate_hint": "O kit do trabalhador deste colega é uma cópia deste modelo. Para trocar para outro modelo ou pegar a versão mais recente deste, abra Avançado.",
+    "built_from_body_mate": "O kit do trabalhador deste colega é uma cópia deste modelo, então editar o modelo não o altera. Para trocar para outro modelo ou pegar a versão mais recente deste, abra Avançado.",
+    "open_advanced": "Abrir Avançado",
     "template_unavailable": "Este modelo não está instalado nesta máquina no momento, então o colega recorre aos padrões. Instale ou restaure {{name}} para devolver todas as suas capacidades.",
     "template_authored": "Você criou este modelo, então pode editá-lo diretamente na página de Agentes.",
     "schedules_heading": "Agendamentos",
@@ -19818,5 +19855,34 @@
     "server_allow_aria": "Permitir {{server}}",
     "server_no_verbs": "Nenhuma ferramenta aprovada automaticamente",
     "server_glob_covered": "Aprovado automaticamente como um todo — desligue o servidor para escolher as ferramentas uma a uma"
+  },
+  "crewWorkerKit": {
+    "section_advanced": "Avançado",
+    "loading": "Carregando o kit do trabalhador…",
+    "title": "Kit extra do trabalhador",
+    "body": "{{name}} entrega o trabalho a um trabalhador. Escolha um modelo de agente para copiar as instruções, conexões, habilidades e aprovações automáticas dele para esse trabalhador. A cópia é feita uma vez: mudanças posteriores no modelo não chegam a ele.",
+    "copied_from": "Copiado de {{template}}",
+    "copied_from_own_copy": "Copiado da própria cópia de um modelo",
+    "none_copied": "Nenhum modelo copiado ainda",
+    "template_label": "Modelo",
+    "pick_template": "Escolha um modelo",
+    "keep_additions": "Manter o que foi adicionado desde a última cópia",
+    "copy": "Copiar para o trabalhador",
+    "recopy": "Copiar de novo do modelo",
+    "preview_title": "Copiar {{template}} faria estas mudanças",
+    "no_changes": "Nada mudaria.",
+    "section_prompt": "Instruções",
+    "section_mcp": "Conexão",
+    "section_skill": "Habilidade",
+    "section_approval": "Aprovação automática",
+    "section_excluded": "Desativado",
+    "skills_in_folder": "Habilidades em {{folder}}",
+    "approval_tool_on_server": "{{tool}} em {{server}}",
+    "approval_every_tool": "Todas as ferramentas de {{server}}",
+    "change_added": "Adicionado",
+    "change_removed": "Removido",
+    "change_changed": "Alterado",
+    "cancel": "Cancelar",
+    "apply": "Aplicar"
   }
 }

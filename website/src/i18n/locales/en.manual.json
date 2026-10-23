@@ -2073,6 +2073,7 @@
       "agent_cycle_hint": "Next agent: Alt+Shift+A · Previous: Alt+Shift+Z",
       "agent_cycle_hint_mac": "Next agent: ⌥⇧A · Previous: ⌥⇧Z",
       "model_inherited_default": "This session runs on the default model ({{name}}). It has no model of its own, so it changes if the default does. Click to pin one.",
+      "model_switch_applies_next_turn": "Your next message runs on the model you pick. This reply finishes on the model it started with.",
       "approve_sub_agent": "Approve sub-agent: {{name}}",
       "branch": "Branch: {{branch}}",
       "detached_head_at": "Detached HEAD at {{branch}}",
@@ -2105,7 +2106,6 @@
       "steer_act_on_this_as_soon_as_possible_enter": "Steer — act on this as soon as possible (Enter)",
       "stop_recording": "Stop recording",
       "stop_the_current_response_to_switch_agents": "Stop the current response to switch agents",
-      "stop_the_current_response_to_switch_model": "Stop the current response to switch model",
       "switch_not_confirmed": "Switch not confirmed yet — it will apply if the connection recovers.",
       "dictation_added": "Dictation added to your message",
       "mic_in_use_elsewhere": "Microphone in use in another chat",
@@ -4962,7 +4962,8 @@
       },
       "messageContextMenu": {
         "copy_link_text": "Copy link text",
-        "copy_link_address": "Copy link address"
+        "copy_link_address": "Copy link address",
+        "open_link_new_tab": "Open link in new tab"
       },
       "chatNavPanel": {
         "link": "Link"
@@ -8327,6 +8328,7 @@
         "unavailable_disabled": "Speech-to-text is turned off. Switch it on above.",
         "status_provider_off": "Not listening",
         "status_not_working": "not working",
+        "status_unavailable_provider": "unavailable",
         "unavailable_provider_off": "Voice is on, but the provider is set to Off, so nothing is listening. Pick another provider from the Provider menu below.",
         "unavailable_extra_missing": "The voice packages are not installed in the gateway's Python environment.",
         "unavailable_no_wheel": "There is no prebuilt speech recogniser for this platform. Install a C++ compiler and CMake, then reinstall the voice packages.",
@@ -9113,7 +9115,8 @@
   },
   "utils": {
     "agentSwitchFeedback": {
-      "turn_in_flight": "A turn is running — try again when it finishes."
+      "turn_in_flight": "A turn is running — try again when it finishes.",
+      "model_deferred": "{{model}} takes over from your next message. This reply finishes on the model it started with."
     },
     "cronUtils": {
       "create": "Create",
@@ -9311,6 +9314,10 @@
       "stream_error_session_failed": "The dictation session failed. Try recording again.",
       "stream_error_vocabulary_rejected": "Amazon Transcribe could not use your custom vocabulary. Choose another one, or None, in the speech-to-text settings, then try again.",
       "stream_error_sdk_outdated": "Mixed languages need amazon-transcribe 0.6.3 or newer in the gateway. Upgrade it with the command in the gateway log, or clear Mixed languages in the speech-to-text settings, then try again."
+    },
+    "speechProviders": {
+      "unavailable_no_reason": "This provider can't run right now.",
+      "sign_in_hint": "Sign in with your {{account}} to use it."
     },
     "templateSource": {
       "built_in": "Built-in",
@@ -9593,6 +9600,9 @@
     "read_only": "Read-only",
     "built_from_headline": "Built from",
     "built_from_body": "This mate’s tools, MCP servers and skills come from this template — see the tabs above for exactly what it includes. These are inherited and can’t be changed here; edit the template on the Agents page, or switch this mate to a different one in General.",
+    "built_from_mate_hint": "This crewmate's worker kit is a copy of this template. To switch to another template or take this one's latest version, open Advanced.",
+    "built_from_body_mate": "This crewmate's worker kit is a copy of this template, so editing the template does not change it. To switch to another template or take this one's latest version, open Advanced.",
+    "open_advanced": "Open Advanced",
     "template_unavailable": "This template isn’t installed on this machine right now, so the mate falls back to defaults. Install or restore {{name}} to give it back its full capabilities.",
     "template_authored": "You authored this template, so you can edit it directly on the Agents page.",
     "schedules_heading": "Schedules",
@@ -9640,5 +9650,34 @@
     "server_allow_aria": "Allow {{server}}",
     "server_no_verbs": "No tools auto-approved",
     "server_glob_covered": "Auto-approved as a whole — turn off the server to choose tools one by one"
+  },
+  "crewWorkerKit": {
+    "section_advanced": "Advanced",
+    "loading": "Loading the worker kit…",
+    "title": "Worker's extra kit",
+    "body": "{{name}} hands work to a worker. Pick one agent template to copy its instructions, connections, skills and auto-approvals into that worker. It is copied once: later changes to the template do not reach it.",
+    "copied_from": "Copied from {{template}}",
+    "copied_from_own_copy": "Copied from its own copy of a template",
+    "none_copied": "No template copied yet",
+    "template_label": "Template",
+    "pick_template": "Choose a template",
+    "keep_additions": "Keep what was added since the last copy",
+    "copy": "Copy into the worker",
+    "recopy": "Re-copy from template",
+    "preview_title": "Copying {{template}} would make these changes",
+    "no_changes": "Nothing would change.",
+    "section_prompt": "Instructions",
+    "section_mcp": "Connection",
+    "section_skill": "Skill",
+    "section_approval": "Auto-approval",
+    "section_excluded": "Turned off",
+    "skills_in_folder": "Skills in {{folder}}",
+    "approval_tool_on_server": "{{tool}} on {{server}}",
+    "approval_every_tool": "Every {{server}} tool",
+    "change_added": "Added",
+    "change_removed": "Removed",
+    "change_changed": "Changed",
+    "cancel": "Cancel",
+    "apply": "Apply"
   }
 }

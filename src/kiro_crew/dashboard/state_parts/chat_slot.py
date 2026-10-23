@@ -130,6 +130,7 @@ class _ChatSlot:
         "_created_by",
         "_created_by_sid",
         "_lineage_minted",
+        "_reports_to_creator",
         "_revived_by",
         "_artifact",
         "_channel_folder_filed",
@@ -162,6 +163,7 @@ class _ChatSlot:
         "_pending_discard_conversation_key",
         "_pending_discard_from_wake",
         "_pending_model_pick",
+        "_deferred_model_switch_key",
         "_eager_spawn_task",
         "_eager_spawn_failures",
         "_eager_spawn_retry_at",
@@ -405,6 +407,7 @@ class _ChatSlot:
     _created_by: str
     _created_by_sid: str
     _lineage_minted: bool
+    _reports_to_creator: bool
     _revived_by: str
     _mcp_report: dict[str, Any] | None
     _mcp_report_session_id: str
@@ -412,6 +415,7 @@ class _ChatSlot:
     _pending_discard_conversation_key: str | None
     _pending_discard_from_wake: bool
     _pending_model_pick: Any
+    _deferred_model_switch_key: str
     _eager_spawn_task: asyncio.Task[None] | None
     _eager_spawn_failures: int
     _eager_spawn_retry_at: float

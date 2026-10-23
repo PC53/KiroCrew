@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         DashboardState,
         StartPriority,
         _ChatSlot,
+        _note_mate_wakes,
         _run_chat,
         chat_done_payload,
         effective_session_key,
@@ -568,6 +569,15 @@ async def _end_turn_tail(
         # hand-off below, silently stranding queued work at the end of an
         # otherwise successful turn.
         try:
+            # A model pick the picker took during THIS turn lands first: the
+            # session is idle now, so the harness's live switch can take it
+            # (no teardown, no replay); where it cannot, the helper arms the
+            # same deferred reset the consume below spends. Before the
+            # consume for exactly that reason.
+            # circular import: session_control imports this package's modules at module level.
+            from kiro_crew.dashboard.session_control import apply_deferred_model_switch
+
+            await apply_deferred_model_switch(state, slot)
             # The consume tore down the session for a mid-turn project change or
             # conversation discard; without a respawn the NEXT message pays the
             # full cold start the eager path exists to hide. Keyed on what
@@ -613,6 +623,9 @@ async def _end_turn_tail(
     # (Re)arm the AutoNudge idle timer on EVERY exit: a turn that ends via
     # timeout, AcpProcessDied, AcpError or a cancel would otherwise orphan it.
     _notify_autonudge_turn_end(slot, **(outcome.nudge_facts if outcome is not None else {}))
+    if turn_exit.depth == 0:
+        # A crewmate's worker reports back to the crewmate's thread on its own.
+        _note_mate_wakes(state, slot, outcome.nudge_facts["reply_text"] if outcome else None)
     if turn_exit.reached_provider:
         slot._cycle_reached_provider = True
     memory_admitted = (

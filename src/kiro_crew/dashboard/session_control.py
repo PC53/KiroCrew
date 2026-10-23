@@ -172,6 +172,7 @@ if TYPE_CHECKING:  # every owner-defined name this module forwards, for type che
         _pick_audit_fields,
         _pick_fields,
         _target_busy_error,
+        apply_deferred_model_switch,
         apply_pending_model_pick,
         arm_model_switch_reset,
         effort_commit_needs_reset,
@@ -182,7 +183,9 @@ if TYPE_CHECKING:  # every owner-defined name this module forwards, for type che
     from kiro_crew.dashboard.session_control_parts.session_create import (  # noqa: F401
         _STOCK_WORKER_AGENT,
         _caller_member_workspace,
+        _conducts_for_a_worker,
         _dispatching_crewmate,
+        _hands_off_to_own_worker,
         _inherited_pin_foreign_to_child,
         _model_pin_refusal,
         _record_spawn,

@@ -107,7 +107,7 @@ module imports the ACP layer. The rest lives in one owner per responsibility, lo
 | `config/loader_config.py` | `KiroCrewConfig`: fields, `load`, `to_dict`, `save`, model, effort and credential resolution, and the provider factory. |
 | `config/loader_pipeline.py` | The load pipeline (`ConfigDocument`, `read_config_document`, `build_config`, `persist_write_back`) and the one-call loaders built on the class (`workspace_dir_for`, `default_project_dir`, `load_config_with_content_stamp`, `load_loop_stall_exit_after`). |
 
-**The harness-choice record.** `agent.acp_backend` and `agent.member_acp_backend` absent or `""` mean no harness choice and resolve to the default; a stored `"kiro"` is the Kiro CLI choice ([harness-parity](harness-parity.md) H1). The loader maps the stored vocabulary to runtime ids on the way in (`_read_backend_choice`), and `to_dict()` maps back (`_stored_agent_dict`), so `config get`, the dashboard response and every full-document writer see `"kiro"`, never the runtime `""`. `to_dict()` carries the RESOLVED value; `save()` writes both keys back as `config.json` stores them (`_restore_stored_harness_fields`, read from disk like `unsandboxed_exec_declared`), so it never invents a choice and never replaces a policy-denied pick with the floor. An in-memory change to either key is therefore not persisted by `save()`; the delta writers (`config set`, the dashboard PATCH) are the write path. `acp_backend_declared()` reports a stored choice, overlay first.
+**The harness-choice record.** `agent.acp_backend` and `agent.member_acp_backend` absent or `""` mean no harness choice and resolve to the default; a stored `"kiro"` is the Kiro CLI choice ([harness-parity](harness-parity.md) H1), except in `agent.member_acp_backend`, where `_read_backend_choice` (`config/loader_builders.py`) reads it as KAS before the selection gate, so every reader of the field sees the backend crewmate threads run on and the mapped value is gated like any other pick. The loader maps the stored vocabulary to runtime ids on the way in (`_read_backend_choice`), and `to_dict()` maps back (`_stored_agent_dict`), so `config get`, the dashboard response and every full-document writer see `"kiro"`, never the runtime `""`. `to_dict()` carries the RESOLVED value; `save()` writes both keys back as `config.json` stores them (`_restore_stored_harness_fields`, read from disk like `unsandboxed_exec_declared`), so it never invents a choice and never replaces a policy-denied pick with the floor. An in-memory change to either key is therefore not persisted by `save()`; the delta writers (`config set`, the dashboard PATCH) are the write path. `acp_backend_declared()` reports a stored choice, overlay first.
 
 Two call cycles run through the owners, and each is broken by one function-local
 import of the higher owner, the idiom this package already uses for the ACP
@@ -463,8 +463,8 @@ none" is the single on-disk representation and a PATCH with `[]` clears it.
   occurrence.
 - **Live resolution, no slot field.** The effective list is never cached on the
   chat slot: `_ChatSlot` carries no steering field, and neither slot create nor
-  agent switch resolves one. The dashboard turn path
-  (`dashboard/chat_runner.py`) resolves it live from the slot's current
+  agent switch resolves one. The dashboard turn's prompt build (`_turn_build_prompt`,
+  `dashboard/chat_turn/prompt_assembly.py`) resolves it live from the slot's current
   `folder_id` against the committed folder tree, on every fresh session and
   every post-compaction reinjection turn; a V2 member chat resolves it on every
   turn, because its essentials envelope is rebuilt each turn
@@ -2067,10 +2067,10 @@ common hot path — no `_app`, or already resolved):
    raises `_AppAgentNotLoaded` (naming `slot.agent`, e.g. *"The app agent
    'my-app-agent' isn't loaded yet — try again in a moment, or restart the
    gateway"*) which a dedicated `except` arm beside the terminal turn-error
-   handlers surfaces as a normal `error` card (no `record_failure` — nothing ran).
-   The raise happens *before* `get_or_create`, while no session lock is held, so
-   the standard `finally` teardown runs without ever creating a session or
-   dispatching an agent.
+   handlers (`_on_app_agent_not_loaded`, `chat_turn/app_agent_binding.py`) surfaces
+   as a normal `error` card (no `record_failure` — nothing ran). The raise happens
+   *before* `get_or_create`, while no session lock is held, so the standard
+   `finally` teardown runs without ever creating a session or dispatching an agent.
 
 The eager-spawn pre-warm path mirrors the **self-heal** step (rescan →
 re-register-from-source) only (so the speculative session bakes in the app's own
