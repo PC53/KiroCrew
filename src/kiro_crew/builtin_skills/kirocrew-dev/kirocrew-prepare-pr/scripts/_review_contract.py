@@ -31,7 +31,8 @@ _SECRET_RE = re.compile(
     # HMAC-SHA256 digest), the payload bound is a generator-derived floor rather
     # than a guess (a guessed floor is beatable by a verbose identifier), and the
     # left boundary (incl. `.`, so attribute access is excluded) keeps ordinary
-    # dotted code intact.
+    # dotted code intact unless what follows the `.` carries a `-` or a payload
+    # shaped as base64url of ASCII JSON, which no identifier chain does.
     #
     # Placing it after the three-segment alternative is defensive, not
     # load-bearing for real tokens: a conventional JWS header is only 33 chars
@@ -40,7 +41,7 @@ _SECRET_RE = re.compile(
     # clears that floor AND whose payload is exactly 43 chars, since the right
     # boundary is satisfied by a `.` and would leave `.signature` in the printed
     # log. That shape is covered by a test.
-    r"|(?<![A-Za-z0-9_.-])eyJ[A-Za-z0-9_-]{96,}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
+    r"|(?<![A-Za-z0-9_-])(?!(?<=\.)(?!eyJ[A-Za-z0-9_]*-)(?!eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_]*-)(?!eyJ[A-Za-z0-9_-](?:[A-Za-f][A-Za-z0-9_-]{3})*(?:[A-Za-f][A-Za-z0-9_-]{1,2})?\.))eyJ[A-Za-z0-9_-]{96,}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
     r"|-----BEGIN[A-Z ]*PRIVATE KEY-----)"
 )
 _KV_RE = re.compile(
