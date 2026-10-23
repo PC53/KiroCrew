@@ -199,6 +199,81 @@ def test_a_project_template_shadows_the_global_one(granting, tmp_path, monkeypat
     assert member_mate_tools.binding_has_mate_tools(traversal) is True
 
 
+def test_a_set_goal_switched_off_in_the_global_settings_keeps_the_editor(
+    granting, tmp_path, monkeypatch
+) -> None:
+    """The dashboard's tool-off action writes ``disabledTools`` to the global
+    ``settings/mcp.json`` only; kiro-cli withholds the tool from every session
+    on it, so the Goals tab must read it beside the spec or it sends the user to
+    a chat that cannot write the goal down."""
+    _, _, specs, parent = granting
+    with_mate = {
+        **parent,
+        "tools": ["@kirocrew-mate"],
+        "mcpServers": {"kirocrew-mate": dict(TRANSPORT)},
+    }
+    (specs / "parent.json").write_text(json.dumps(with_mate), encoding="utf-8")
+    settings = tmp_path / "settings-mcp.json"
+    monkeypatch.setattr(agent, "_KIRO_MCP_JSON", settings)
+    binding = SimpleNamespace(kiro_agent="parent", workspace="default")
+    assert member_mate_tools.binding_can_set_goal(binding) is True
+    settings.write_text(
+        json.dumps({"mcpServers": {"kirocrew-mate": {"disabledTools": ["set_goal"]}}}),
+        encoding="utf-8",
+    )
+    assert member_mate_tools.binding_can_set_goal(binding) is False
+    # Another of its tools switched off there leaves the chat route alone.
+    settings.write_text(
+        json.dumps({"mcpServers": {"kirocrew-mate": {"disabledTools": ["goal_read"]}}}),
+        encoding="utf-8",
+    )
+    assert member_mate_tools.binding_can_set_goal(binding) is True
+    # The global switch holds when the template cannot be resolved at all.
+    settings.write_text(
+        json.dumps({"mcpServers": {"kirocrew-mate": {"disabledTools": ["set_goal"]}}}),
+        encoding="utf-8",
+    )
+    missing = SimpleNamespace(kiro_agent="nobody", workspace="default")
+    assert member_mate_tools.binding_can_set_goal(missing) is False
+    # A row bound to no template runs the default one, under the same switch.
+    unbound = SimpleNamespace(kiro_agent="", workspace="default")
+    assert member_mate_tools.binding_can_set_goal(unbound) is False
+    # The server muted whole there withholds every one of its tools.
+    settings.write_text(
+        json.dumps({"mcpServers": {"kirocrew-mate": {"disabled": True}}}), encoding="utf-8"
+    )
+    assert member_mate_tools.binding_can_set_goal(binding) is False
+    assert member_mate_tools.binding_can_set_goal(unbound) is False
+    settings.write_bytes(b"\xff")
+    assert member_mate_tools.binding_can_set_goal(binding) is True
+
+
+def test_a_member_backend_that_withholds_the_mate_server_keeps_the_editor(
+    granting, tmp_path, monkeypatch
+) -> None:
+    """A mirrored member backend composes the session's array itself, and codex
+    withholds every managed Crew server outside the control plane, so a spec
+    that mounts ``kirocrew-mate`` still runs the crewmate without ``set_goal``
+    there. The Goals tab reads the backend's own projection, not the spec alone."""
+    from chat_test_helpers import pin_harness_choice
+
+    from kiro_crew.agent_sdk.backends import ACP_BACKEND_CODEX, ACP_BACKEND_KIRO
+
+    _, _, specs, parent = granting
+    with_mate = {
+        **parent,
+        "tools": ["@kirocrew-mate"],
+        "mcpServers": {"kirocrew-mate": dict(TRANSPORT)},
+    }
+    (specs / "parent.json").write_text(json.dumps(with_mate), encoding="utf-8")
+    monkeypatch.setattr(agent, "_KIRO_MCP_JSON", tmp_path / "absent-settings.json")
+    binding = SimpleNamespace(kiro_agent="parent", workspace="default")
+    pin_harness_choice(member_acp_backend=ACP_BACKEND_KIRO)
+    assert member_mate_tools.binding_can_set_goal(binding) is True
+    pin_harness_choice(member_acp_backend=ACP_BACKEND_CODEX)
+    assert member_mate_tools.binding_can_set_goal(binding) is False
+
+
 def test_spec_has_mate_tools_needs_the_server_and_a_tools_ref() -> None:
     entry = {"kirocrew-mate": dict(TRANSPORT)}
     assert member_mate_tools.spec_has_mate_tools({"mcpServers": entry, "tools": ["*"]})
@@ -265,3 +340,52 @@ def test_the_shipped_defaults_auto_approve_every_mate_grant() -> None:
     )
     shipped = {t for t in defaults["allowedTools"] if t.startswith("@kirocrew-mate/")}
     assert shipped == set(agent._MATE_AUTO_GRANTS)
+
+
+def test_set_goal_is_exposed_only_when_the_spec_mounts_that_tool() -> None:
+    """The Goals tab starts a goal in the chat only when the mate can write it
+    down: the server being mounted is not enough, the tool itself must be."""
+    base = {"mcpServers": {"kirocrew-mate": dict(TRANSPORT)}}
+    assert member_mate_tools.spec_exposes_mate_tool(
+        {**base, "tools": ["*"]}, member_mate_tools.SET_GOAL_TOOL
+    )
+    assert member_mate_tools.spec_exposes_mate_tool(
+        {**base, "tools": ["read", "@kirocrew-mate"]}, member_mate_tools.SET_GOAL_TOOL
+    )
+    assert member_mate_tools.spec_exposes_mate_tool(
+        {**base, "tools": ["@kirocrew-mate/set_goal"]}, member_mate_tools.SET_GOAL_TOOL
+    )
+    # Mounted, but only another of its tools: the server is there, set_goal is not.
+    assert not member_mate_tools.spec_exposes_mate_tool(
+        {**base, "tools": ["@kirocrew-mate/goal_read"]}, member_mate_tools.SET_GOAL_TOOL
+    )
+    # Mounted whole, then the tool, its server or everything excluded.
+    for excluded in (["@kirocrew-mate/set_goal"], ["@kirocrew-mate"], ["*"]):
+        assert not member_mate_tools.spec_exposes_mate_tool(
+            {**base, "tools": ["@kirocrew-mate"], "excludedTools": excluded},
+            member_mate_tools.SET_GOAL_TOOL,
+        )
+    # The server entry's own per-tool switch withholds it too.
+    for disabled in (["set_goal"], ["@kirocrew-mate/set_goal"], ["*"]):
+        assert not member_mate_tools.spec_exposes_mate_tool(
+            {
+                "mcpServers": {"kirocrew-mate": {**TRANSPORT, "disabledTools": disabled}},
+                "tools": ["*"],
+            },
+            member_mate_tools.SET_GOAL_TOOL,
+        )
+    assert member_mate_tools.spec_exposes_mate_tool(
+        {
+            "mcpServers": {"kirocrew-mate": {**TRANSPORT, "disabledTools": ["goal_read"]}},
+            "tools": ["*"],
+        },
+        member_mate_tools.SET_GOAL_TOOL,
+    )
+    # No server, or a muted one, exposes nothing.
+    assert not member_mate_tools.spec_exposes_mate_tool(
+        {"tools": ["*"]}, member_mate_tools.SET_GOAL_TOOL
+    )
+    assert not member_mate_tools.spec_exposes_mate_tool(
+        {"mcpServers": {"kirocrew-mate": {**TRANSPORT, "disabled": True}}, "tools": ["*"]},
+        member_mate_tools.SET_GOAL_TOOL,
+    )

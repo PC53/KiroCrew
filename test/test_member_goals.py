@@ -48,7 +48,7 @@ from member_goals_helpers import (  # noqa: F401 -- the autouse fixtures registe
 )
 
 from kiro_crew import change_card_catalog as catalog
-from kiro_crew import mcp_mate, member_goals
+from kiro_crew import mcp_mate, member_goals, member_mate_tools
 from kiro_crew import members as members_mod
 from kiro_crew.agent_files import ASSISTANT_MEMBER_NAME
 from kiro_crew.config.paths import data_home
@@ -1527,3 +1527,25 @@ def test_the_goal_section_carries_no_reading_so_progress_does_not_resend_it() ->
     assert "17 pages" not in after and "pages reviewed" in after and "40" in after
     prompt = goal_reminder.reminder_prompt(member_goals.read_goals(slug, ORDINARY), "daily")
     assert "17 pages" in prompt
+
+
+def test_the_view_says_whether_the_mate_can_write_a_goal_itself(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The Goals tab starts a new goal in the chat only when the mate has
+    ``set_goal``; the view carries that fact so a mate without the mate tools
+    keeps the tab's own editor instead of being sent back and forth."""
+    _seed()
+    slug = _slug(ORDINARY)
+    state = _reminder_state(tmp_path)
+    base = f"/api/members/{slug}/goals"
+    status, body = _owner(state, "GET", base + f"?member={ORDINARY}")
+    assert status == 200 and body["mate_tools"] is True
+    monkeypatch.setattr(member_mate_tools, "binding_can_set_goal", lambda _binding: False)
+    status, body = _owner(state, "GET", base + f"?member={ORDINARY}")
+    assert status == 200 and body["mate_tools"] is False
+    # A write answers with the same view, so the tab never flips mid-edit.
+    status, body = _owner(
+        state, "PUT", base + "/long-term", {"member": ORDINARY, "long_term": "Ship"}
+    )
+    assert status == 200 and body["mate_tools"] is False

@@ -117,13 +117,30 @@ async def _scheduled_cadences(request: web.Request, slug: str) -> set[str]:
     return {c for c in (goal_reminder.cadence_of(j) for j in jobs) if c}
 
 
-async def _view(request: web.Request, slug: str, rec: dict[str, Any]) -> dict[str, Any]:
+async def _view(
+    request: web.Request,
+    slug: str,
+    rec: dict[str, Any],
+    cfg: KiroCrewConfig | None = None,
+    member: str = "",
+) -> dict[str, Any]:
     view = member_goals.public_view(rec)
     # Each switch shows what will actually run: a schedule removed from the
     # Schedule page reads as off, not as a promise nothing keeps.
     live = await _scheduled_cadences(request, slug)
     for cadence in member_goals.CADENCES:
         view["schedules"][cadence] = bool(view["schedules"][cadence] and cadence in live)
+    # Whether this crewmate can write a goal itself (``set_goal`` exposed on its
+    # spec, not merely the mate server mounted). The Goals tab starts a new goal
+    # in the chat when it can, and falls back to its own editor when it cannot,
+    # or no goal could ever be saved.
+    from kiro_crew.member_mate_tools import binding_can_set_goal
+
+    binding = cfg.agents.get(member) if cfg is not None and member else None
+    # The check reads and parses the crewmate's spec from disk: off the loop.
+    view["mate_tools"] = (
+        True if binding is None else await asyncio.to_thread(binding_can_set_goal, binding)
+    )
     return view
 
 
@@ -177,12 +194,14 @@ async def api_member_goals_get(request: web.Request) -> web.Response:
     )
     if isinstance(who, web.Response):
         return who
-    slug, member, _cfg = who
+    slug, member, cfg = who
     try:
         rec = await asyncio.to_thread(member_goals.read_goals, slug, member)
     except member_goals.GoalsUnreadable:
         return _unreadable()
-    return web.json_response({"slug": slug, "member": member, **(await _view(request, slug, rec))})
+    return web.json_response(
+        {"slug": slug, "member": member, **(await _view(request, slug, rec, cfg, member))}
+    )
 
 
 async def _owner_write(
@@ -213,7 +232,13 @@ async def _owner_write(
             await _sync_reminder(request, slug, member, cfg)
     more = extra() if callable(extra) else {}
     return web.json_response(
-        {"ok": True, "slug": slug, "member": member, **more, **(await _view(request, slug, rec))}
+        {
+            "ok": True,
+            "slug": slug,
+            "member": member,
+            **more,
+            **(await _view(request, slug, rec, cfg, member)),
+        }
     )
 
 
@@ -509,7 +534,12 @@ async def api_member_goals_schedules(request: web.Request) -> web.Response:
                     # A later schedule write owns these switches now.
             return _deny(503, "schedule_failed", "the check-in could not be scheduled")
     return web.json_response(
-        {"ok": True, "slug": slug, "member": member, **(await _view(request, slug, rec))}
+        {
+            "ok": True,
+            "slug": slug,
+            "member": member,
+            **(await _view(request, slug, rec, cfg, member)),
+        }
     )
 
 

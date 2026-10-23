@@ -162,6 +162,10 @@ export interface MemberGoals {
   key_results: GoalKeyResult[]
   schedules: GoalSchedules
   reports: GoalReport[]
+  /** Whether this crewmate can write a goal itself (`set_goal` from the mate
+   *  tools). False: the Goals tab's Create a goal opens its own editor instead
+   *  of starting the goal in chat. Absent on an older gateway: read as true. */
+  mate_tools?: boolean
   /** The key result the user removed last, restorable (with its readings) until the set changes again. */
   removed_key_result: { id: string; text: string; at: number } | null
   /** The goal the user removed last, restorable (with its milestone links). */

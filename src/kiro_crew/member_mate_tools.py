@@ -82,6 +82,85 @@ def spec_has_mate_tools(spec: Any) -> bool:
     return _referenced(spec.get("tools"))
 
 
+#: The mate tool that writes a goal down (``kiro_crew.mcp_mate``): the one the
+#: Goals tab's chat-started goal depends on.
+SET_GOAL_TOOL = "set_goal"
+
+
+def spec_exposes_mate_tool(spec: Any, tool: str) -> bool:
+    """Whether *spec* mounts the mate server AND exposes its *tool*.
+
+    Stricter than :func:`spec_has_mate_tools`: a ``tools`` list naming only
+    ``@kirocrew-mate/goal_read`` mounts the server but not ``set_goal``, an
+    ``excludedTools`` entry for the tool (or its server, or ``*``) withholds it,
+    and so does the server entry's own ``disabledTools``.
+    """
+    if not spec_has_mate_tools(spec):
+        return False
+    ref = f"{_MATE_REF}/{tool}"
+    excluded = _named_tools(spec.get("excludedTools"))
+    if any(e in ("*", _MATE_REF, ref) for e in excluded):
+        return False
+    # The server entry's own per-tool switch (``disabledTools``, kiro-cli's
+    # spelling) withholds the tool even when the ``tools`` list mounts it.
+    entry = _server_entry(spec)
+    disabled = entry.get("disabledTools") if isinstance(entry, dict) else None
+    if isinstance(disabled, list) and any(
+        d in ("*", tool, ref) for d in disabled if isinstance(d, str)
+    ):
+        return False
+    tools = spec.get("tools")
+    entries = ["*"] if tools == "*" else _named_tools(tools)
+    return any(e in ("*", _MATE_REF, ref) for e in entries)
+
+
+def binding_can_set_goal(binding: Any) -> bool:
+    """Whether the crewmate *binding*'s sessions expose ``set_goal``: what the
+    Goals tab reads to start a new goal in the chat rather than in its editor.
+    Read as :func:`binding_has_file_write` reads, so an unreadable spec answers
+    True, keeping the chat route the default, and a row without a template is
+    read as the default template its sessions run.
+
+    The spec is one of three places the tool can be lost. The user's global MCP
+    settings file, which the dashboard's server and tool switches write and
+    kiro-cli enforces beside the spec: a ``kirocrew-mate`` muted whole there, or a
+    ``set_goal`` switched off there, is withheld from every session whatever the
+    spec mounts. And the member backend's own projection, which on a mirrored
+    harness composes the session's array and may withhold a server the spec
+    mounts. All three are read through the ``agent_sdk.agent_specs`` seam
+    (application code does not import the ACP or provider layers)."""
+    from kiro_crew.agent_sdk.agent_specs import (
+        member_backend_mounts_spec_server,
+        session_mcp_server_is_disabled,
+        session_mcp_tool_is_disabled,
+    )
+
+    name = getattr(binding, "kiro_agent", "")
+    if not isinstance(name, str):
+        return True
+    # A row that binds no template runs the default one
+    # (``config.loader.member_template_id``), and the global switches apply to
+    # its sessions like any other's, so it is resolved rather than returned early.
+    name = name or Path(AGENT_FILENAME).stem
+    workspace = getattr(binding, "workspace", "") or ""
+    try:
+        spec = _read_template(name, workspace)
+    except Exception:
+        logger.debug("spec for %r unreadable; keeping the chat route", name, exc_info=True)
+        return True
+    if spec is not None and not spec_exposes_mate_tool(spec, SET_GOAL_TOOL):
+        return False
+    if session_mcp_server_is_disabled(MATE_SERVER, name):
+        return False
+    if session_mcp_tool_is_disabled(MATE_SERVER, SET_GOAL_TOOL, name):
+        return False
+    # The spec mounting the server is what kiro-cli runs; a mirrored member
+    # backend composes the session's array itself and may withhold the server
+    # (codex and its siblings withhold every managed Crew server outside the
+    # control plane), so the backend's own projection has the last word.
+    return member_backend_mounts_spec_server(MATE_SERVER, name, workspace or None)
+
+
 def _read_template(name: str, workspace: str) -> dict | None:
     """The spec file named *name* a session in *workspace* runs, project scope first.
 
