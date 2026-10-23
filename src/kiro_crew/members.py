@@ -125,9 +125,12 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         welcome_owed,
     )
     from kiro_crew.members_parts.prompt_layers import (  # noqa: F401
+        _RULES_WRITE_LOCK,
         MEMBER_BRIEFING_TRUNCATION_MARKER,
+        MemberRulesChanged,
         MemberRulesUnreadable,
         _briefing_pinned_target,
+        _write_member_rules,
         cap_member_briefing,
         member_briefing_path,
         member_briefing_supported,

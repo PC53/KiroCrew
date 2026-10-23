@@ -378,6 +378,9 @@ export default function ChangeCard({ card, store, refresh, remove }: ChangeCardP
           </div>
 
           <div ref={footerRef} className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-4 py-3" data-testid="change-card-footer">
+            {spec?.pressNote && card.status === 'pending' && !expired && (
+              <p className="m-0 basis-full text-[12px] leading-5 text-muted" data-testid="change-card-press-note">{spec.pressNote()}</p>
+            )}
             {card.status === 'pending' && !expired && (
               <Btn
                 className="min-h-11 border-transparent hover:border-transparent text-muted hover:text-text"
@@ -385,7 +388,7 @@ export default function ChangeCard({ card, store, refresh, remove }: ChangeCardP
                 disabled={busy}
                 data-testid="change-card-cancel"
               >
-                {i18nT('components.changeCards.cancel')}
+                {spec?.decline?.() ?? i18nT('components.changeCards.cancel')}
               </Btn>
             )}
             {(card.status === 'failed' || expired) && (
