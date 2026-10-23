@@ -26,6 +26,17 @@ _GITLAB_HOST_NAME_RE = _re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
 
 _BROWSER_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]"})
 
+#: Most ``dashboard.browser_local_origins`` entries kept. One dev server is one
+#: entry, so this is generous; it bounds the Preview tab's allowlist and the PATCH
+#: body that writes it.
+BROWSER_LOCAL_ORIGINS_MAX = 32
+
+#: The shape of one entry, as the Settings editor and ``PATCH /api/config/kirocrew``
+#: refuse it: a loopback host spelling and a port, nothing else. The loader's
+#: :func:`coerce_browser_local_origins` applies the same rule to a hand-edited file,
+#: plus the 1-65535 range the regex cannot say.
+BROWSER_LOCAL_ORIGIN_PATTERN = r"^(localhost|127\.0\.0\.1|\[::1\]):[0-9]{1,5}$"
+
 
 def coerce_browser_local_origins(raw: object) -> list[str]:
     """Coerce ``dashboard.browser_local_origins`` to canonical ``host:port`` entries.
@@ -57,7 +68,7 @@ def coerce_browser_local_origins(raw: object) -> list[str]:
         if not 0 < port < 65536:
             continue
         canonical = f"{host}:{port}"
-        if canonical not in out:
+        if canonical not in out and len(out) < BROWSER_LOCAL_ORIGINS_MAX:
             out.append(canonical)
     return out
 

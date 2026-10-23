@@ -528,6 +528,16 @@ class _TurnExit:
         self.responsive_owner: Any = None
 
 
+def _end_browser_live_turn(slot: _ChatSlot) -> None:
+    """Close the live browser card's turn for this slot, if one was opened."""
+    try:
+        from kiro_crew.browser_harness.live_hub import get_live_hub
+
+        get_live_hub().turn_ended(slot.key)
+    except Exception:  # noqa: BLE001 - the card never fails the turn's hand-off
+        logger.debug("browser live turn_ended failed", exc_info=True)
+
+
 async def _end_turn_tail(
     state: DashboardState,
     slot: _ChatSlot,
@@ -592,6 +602,11 @@ async def _end_turn_tail(
         slot._turn_channel_narrowed = False
         slot._turn_channel_origin = False
         slot._turn_user_sent = False
+        # The live browser card's turn ends with the agent's: the screencast
+        # stops, the input lock opens and the card folds to its done line. The
+        # turn was opened by the first ``browser`` op (``handlers/browser_ops``),
+        # so a turn that never browsed has no session here and this is a no-op.
+        _end_browser_live_turn(slot)
     # A healthy `wait` clears its own state with a final keepalive ping, but
     # that ping is best-effort and cannot run at all if the MCP subprocess died
     # mid-sleep (hard stop, crash, gateway abort). Clearing at turn end is the

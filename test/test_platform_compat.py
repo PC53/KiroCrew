@@ -784,57 +784,6 @@ class TestFindListeningPids:
 
         assert pc.process_owns_loopback_listener(4242, 7777, proc_root=proc_root) is True
 
-    def test_windows_listener_probe_marks_browser_capable(self, monkeypatch):
-        """Use real Windows/Darwin attribution there; both synthetic shapes elsewhere."""
-        from kiro_crew.browser_cli import view as browser_view
-
-        def _assert_capable(port: int) -> None:
-            assert pc.process_owns_loopback_listener(os.getpid(), port) is True
-            browser_view._invalidate_listener_lookup_self_test_cache()
-            try:
-                assert browser_view._listener_lookup_functional() is True
-                assert browser_view._structurally_blind_listener_attribution() is False
-            finally:
-                browser_view._invalidate_listener_lookup_self_test_cache()
-
-        if sys.platform in {"win32", "darwin"}:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-                listener.bind(("127.0.0.1", 0))
-                listener.listen(1)
-                _assert_capable(int(listener.getsockname()[1]))
-            return
-
-        monkeypatch.setattr(pc, "IS_WINDOWS", True)
-        monkeypatch.setattr(pc, "IS_LINUX", False)
-        monkeypatch.setattr(pc, "IS_POSIX", False)
-        monkeypatch.setattr(
-            pc,
-            "_windows_loopback_listener_owner_pids",
-            lambda port: {os.getpid()},
-        )
-        _assert_capable(45613)
-
-        monkeypatch.setattr(pc, "IS_WINDOWS", False)
-        monkeypatch.setattr(pc, "IS_LINUX", False)
-        monkeypatch.setattr(pc, "IS_POSIX", True)
-        monkeypatch.setattr(pc, "listening_pid_tool", lambda: "lsof")
-        monkeypatch.setattr(
-            pc,
-            "trusted_system_bin",
-            lambda name: "/usr/bin/lsof" if name == "lsof" else None,
-        )
-        monkeypatch.setattr(
-            pc,
-            "probe_port_listeners",
-            lambda port, process_pid=None: (
-                [pc.PortListener(os.getpid(), "127.0.0.1", "4")],
-                True,
-            ),
-        )
-        _assert_capable(45613)
-
-
-class TestProcessCommandLine:
     def test_self_cmdline_mentions_python(self):
         # Our own process is a Python interpreter, so when the probe returns
         # anything it must mention python/pytest — and the call must never raise.

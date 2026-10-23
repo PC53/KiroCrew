@@ -572,7 +572,6 @@ def _doctor(platform_boot_error: "Exception | None" = None, bundle: bool = False
         issues.append("git")
 
     _report_node(issues)
-    install._doctor_browser_bootstrap()
 
     # venv detection — used by the runtime section below. Windows venvs put the
     # interpreter under .venv\Scripts\python.exe, not .venv/bin/python3, so a

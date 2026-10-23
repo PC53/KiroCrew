@@ -113,6 +113,7 @@ from kiro_crew.config.section_builders import (
 )
 from kiro_crew.config.sections import (
     AgentConfig,
+    BrowserConfig,
     ChannelConfig,
     DecisionsConfig,
     HeartbeatConfig,
@@ -828,6 +829,7 @@ def build_config(
     telemetry_data = _coerced_section(data, "telemetry", _degraded)
     watchdog_data = _coerced_section(data, "watchdog", _degraded)
     decisions_data = _coerced_section(data, "decisions", _degraded)
+    browser_data = _coerced_section(data, "browser", _degraded)
     resource_limits_data = _coerced_section(data, "resource_limits", _degraded)
 
     # Parse agents section into dict[str, KiroCrewAgentConfig]
@@ -1111,6 +1113,7 @@ def build_config(
         heartbeat=HeartbeatConfig(default_deliver=heartbeat_default_deliver),
         monitoring=_build_monitoring_config(monitoring_data, monitoring_prefer_structured_arming),
         decisions=DecisionsConfig.from_raw(decisions_data),
+        browser=BrowserConfig.from_raw(browser_data),
         skills=_build_skills_config(skills_data),
         session_summary=_build_session_summary_config(session_summary_data),
         slack_channels={
@@ -1140,6 +1143,7 @@ def build_config(
         # The MERGED view, unlike the capture: a misspelling in either file has
         # no effect, so either one is worth naming.
         _resolution.warn_misspelled_section_keys(data, cfg)
+        _resolution.warn_retired_section_keys(data)
 
     cfg._base_unreadable = doc.base_unreadable
     cfg._overlay_unreadable = doc.overlay_unreadable

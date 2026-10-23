@@ -1,1248 +1,463 @@
 ## Browser Module
 
-Website browsing has two agent paths. In the desktop app, the `browser` MCP
-tool drives the Browser panel's native embedded Chromium view. When no native
-panel serves the session, or `dashboard.use_builtin_browser` is off, the tool
-directs the agent to the `playwright-cli` shell path. Kiro Crew owns the CLI
-install flow, snapshot directory, command bus, and dashboard surfaces.
+The agent browses through one driver, and the person watches it in the chat.
+[Browser Harness](https://github.com/browser-use/browser-harness) (MIT) drives a
+Chromium-family browser over CDP; the gateway pins it, runs its daemon, holds the
+only CDP connection to the browser through a loopback relay, and streams the page
+into the transcript as a live card the person can take over with one click. The
+`browser` MCP tool keeps its name, its governance check and its URL gate; only
+what sits behind it changed.
+
+This document is the spec for the whole stack. The design and its measurements
+are in
+[rfc-browser-live-harness.md](../../request-for-change/rfc-browser-live-harness.md);
+that RFC supersedes
+[rfc-playwright-cli-migration.md](../../request-for-change/rfc-playwright-cli-migration.md).
+The whole stack landed in one change: the driver, the stream, the tool, the card,
+Settings and the removal of what they replaced, so no release carries a half of
+this.
 
 ### Architecture
 
-The native path is a **single MCP tool, not a Playwright tool namespace.** Its
-`op` enum exposes `navigate`, `snapshot`, `click`, `type`, `press_key`, `hover`,
-`select_option`, `screenshot`, `wait_for`, `back`, and `console`. The MCP shim
-posts one bounded command to the gateway's in-memory bus; Electron long-polls the
-bus, runs the operation in the panel it owns, and posts the result. A missing
-panel fails fast to the CLI fallback. The agent still decides per task whether a
-browser is warranted or whether `web_fetch` answers the question.
-
 ```
-agent turn ──MCP browser(op, args)──▶ gateway command bus ──▶ Electron native view
-     │                                      │
-     │                                      └─ no panel / built-in disabled
-     └─shell fallback──▶ playwright-cli <verb> …
-                              │
-                              ├─▶ stdout: page URL, title, snapshot YAML path
-                              └─▶ disk:   .../page-<timestamp>.yml
+browser ◀──one CDP websocket──▶ gateway relay ◀── Harness daemon (as if it were the browser)
+                                     │
+                                     ├── screencast sessions ──▶ browser_frame ──▶ live card
+                                     └── input sessions ◀── /api/browser/input ◀── takeover
+
+agent turn ──MCP browser(op, args)──▶ ops ──▶ supervisor.call(<helper>) ──▶ daemon IPC
 ```
 
-The native route is session-bound. The MCP shim sends the namespaced session key
-in the authenticated request header and the bare slot key in the body, matching
-the panel registration. The gateway bounds queues to 32 commands per session,
-uses 15-second operation timeouts (60 seconds for `navigate` and `wait_for`), and
-expires panel liveness after 30 seconds without a drain or result. The three
-internal routes are `/api/browser/command`, `/api/browser/command-drain`, and
-`/api/browser/command-result`; all require internal-secret authentication and do
-not accept dashboard-cookie callers.
+| Part | Where |
+|---|---|
+| Driver install, environment fence, browser discovery, relay, supervisor, helper worker, status and install routes | the `browser_harness` package: `env.py`, `install.py`, `chromium.py`, `discover.py`, `relay.py`, `supervisor.py`, `helper_worker.py`; `dashboard/handlers/browser_harness_status.py` |
+| Screencast, adaptive ladder, takeover input, the live hub, the card's routes and the `browser_live` event | `screencast.py`, `takeover.py`, `live_hub.py` in that package; `dashboard/handlers/browser_live.py` |
+| The `browser` MCP tool's ops, the snapshot walker and the op route that also drives the card | `mcp_tools/browser.py`, `ops.py`, `snapshot_walker.js` in that package; `dashboard/handlers/browser_ops.py` |
+| The live card in the transcript | `BrowserLiveCard*.tsx` under the chat page, the `useBrowserLive*` hooks, and the binary-frame branch of `useWebSocket.ts` |
+| Settings → Browser and the Preview tab | `website/src/pages/settings/Browser*.tsx`, `config/sections_browser.py`, `website/src/components/WebPreviewPanel*.tsx` |
+| Screenshot directory, retired keys, doctor row, Preview tab's native view | `browser_snapshots.py`, `config/resolution.py`, `doctor_checks/install.py`, `website/electron/browser-view.js` |
 
-The gateway also runs exactly two kinds of CLI command, neither on an agent's
-behalf: the `show` dashboard it supervises ([Dashboard
-integration](#dashboard-integration)), and the browsing verb behind the Browser
-panel's address bar ([Address bar launcher](#address-bar-launcher)), which a
-HUMAN triggers by pressing Enter in an authenticated dashboard. Agent CLI
-fallback actions still go through the ordinary shell approval path.
+One supervisor per gateway owns the daemon and the relay. One relay connection
+per browser. One live card per agent turn. The side panel keeps one surface,
+the **Preview** tab, for the person's own local dev server; the agent never
+drives it.
 
-**The CLI stdout line is the contract.** Every CLI command prints the resulting page URL,
-the page title, and a filesystem path to a snapshot YAML. Roughly 250 characters
-of stdout carry a complete action result, and the accessibility tree stays on
-disk until the agent decides it needs it. This is why no compression layer
-exists: a wrapper that read the YAML and summarized it would put the tree back
-into the model context, which is the cost the on-disk handoff removes.
+### The driver
 
-**The path printed on stdout is authoritative.** The agent uses the exact path it
-was given rather than deriving one, because the snapshot directory is owned by the
-gateway (see [Snapshot retention](#snapshot-retention)) and is not the agent's
-working directory.
+The gateway installs `browser-harness==0.1.13` into its own virtual environment
+at `<data-home>/browser-harness` (`python -m venv --clear`, then
+`pip install --require-hashes -r browser_harness/requirements.lock`: 12 pinned
+requirements, 176 sha256 hashes, compiled for Python 3.11+ on every platform).
+Kiro's own Chromium (Chrome for Testing `154.0.8037.0`, the build Playwright's
+`chromium-1244` ships, fetched from Google's bucket and then Playwright's CDN,
+which alone hosts linux-arm64) is downloaded into the same prefix for hosts with
+no usable Chrome (`chromium.py`). The prefix is a `READONLY` crew-home leaf, so
+a sandboxed process can neither replace the interpreter nor the browser the
+gateway executes; the install job (`POST /api/browser/install`, one at a time,
+`409` otherwise, `{"components": ["harness"|"chromium"]}` to redo one part) runs
+in the gateway, outside the sandbox.
 
-**Element refs are per-snapshot.** A ref such as `[ref=e5]` identifies an element
-within the snapshot that produced it, and any page change invalidates it. The
-invariant an agent must hold is therefore: after a navigation, a click that
-changes the page, or a reload, take a fresh `snapshot` and address elements from
-that one. A ref reused across a page change either misses or hits the wrong
-element, and the failure is silent in the second case, which is why the rule is
-stated as re-snapshot rather than as retry-on-error.
+The daemon starts with a scrubbed environment built by one function and pinned
+by one test:
 
-**Sessions are named.** `-s=<name>` selects a session, so several independent
-browsing contexts coexist under one CLI install and one agent can keep a
-logged-in context separate from a throwaway one.
+| Variable | Value | Why |
+|---|---|---|
+| `BH_TELEMETRY`, `BROWSER_HARNESS_TELEMETRY`, `ANONYMIZED_TELEMETRY` | `false` | the three switches the package reads |
+| `BH_POSTHOG_HOST` | `http://127.0.0.1:9` | a second fence if a switch is missed |
+| `BH_TAB_MARKER` | `0` | no badge painted on the page |
+| `BH_UPDATE_CHECK` | `0` | the CLI's PyPI probe never runs |
+| `BU_CDP_URL` | the relay's URL | connects to the relay, not the browser |
+| `BU_NAME` | the gateway's daemon name | a named daemon creates its OWN tab instead of attaching the first page it finds (the person's) |
+| `BH_HOME`, `BH_CONFIG_DIR`, `BH_RUNTIME_DIR`, `BH_TMP_DIR`, `BH_AGENT_WORKSPACE` | under `<data-home>/browser-harness-ipc` | the socket, pid file, log and scratch never leave the hidden leaf |
+| `BROWSER_USE_API_KEY`, `BU_BROWSER_ID`, `BU_CDP_WS`, `BU_AUTOSPAWN`, the cloud API/OAuth variables, inherited `BH_*` roots | removed | the only ways in to the cloud, or to a path outside the leaf |
 
-### Skill contract
+The removed keys stay removed even when the gateway's own environment carries
+them. The gateway never runs Harness's CLI, its `run.py`, its MCP server or its
+update check, and never calls `browser_js`, `browser_cdp` or `http_get`; it
+calls the daemon through Harness's own IPC (a Unix socket on POSIX, loopback TCP
+with a token on Windows), whose path or token lives in a `HIDDEN` crew-home
+leaf. A version bump re-reads the package's telemetry and auth modules before it
+lands, because 0.1.13's telemetry is on by default and its run event carries the
+agent's whole script unscrubbed.
 
-The shipped browser and computer-use skills are self-contained: custom agents can
-replace the base prompt. Compression removes repeated explanations within a skill,
-not operational constraints or tool signatures. Each workflow retains its applicable
-session-family isolation, printed-path and fresh-ref rules, approval and refusal
-boundaries, borrowed-browser and pointer/password safety, and privacy inspection
-plus explicit authorization before publishing. No shared prompt fragment is needed
-to execute a loaded skill safely.
+**The helper worker.** The gateway's Python has no `browser_harness` package, so
+each helper call runs in a worker the venv's interpreter executes
+(`<prefix>/bin/python -I browser_harness/helper_worker.py`, JSON lines on its
+pipes, one call at a time behind a lock, `CALL_TIMEOUT_SECS = 90`). The worker's
+allowlist is the whole surface, and the supervisor checks the same table before it
+sends (`supervisor.HELPERS`, pinned equal by a test):
+
+| helper | kwargs | Harness function |
+|---|---|---|
+| `goto` | `url` | `goto_url` (returns `Page.navigate`'s reply, `errorText` on failure) |
+| `click` | `x, y, button="left", clicks=1` | `click_at_xy` |
+| `mouse_move` | `x, y` | the worker's own `Input.dispatchMouseEvent` (Harness has no hover) |
+| `drag` | `x, y, to_x, to_y` | the worker's own press / stepped moves / release |
+| `type_text` | `text` | `type_text` (`Input.insertText`) |
+| `press_key` | `key, modifiers=0` (1 Alt, 2 Ctrl, 4 Meta, 8 Shift) | `press_key` |
+| `scroll` | `x, y, dy=-300, dx=0` | `scroll` |
+| `screenshot` | `path, full=False, max_dim=None` | `capture_screenshot` |
+| `page_info` | -- | `page_info` (`{url,title,w,h,sx,sy,pw,ph}` or `{dialog}`) |
+| `wait_for_load` | `timeout=15.0` | `wait_for_load` |
+| `new_tab`, `switch_tab`, `list_tabs`, `close_tab`, `current_tab` | `url` / `target, activate` / `include_chrome` / `target` / -- | the tab helpers |
+| `js` | `expression, target_id=None` | `js`, ONLY for `snapshot_walker.js` |
+
+`run.py`, `browser_js`, `browser_cdp`, `http_get`, `upload_file`, `fill_input` and
+the agent-helper loader are not reachable through it. A helper's failure comes back
+as `HelperError` with Harness's own one-line message; `HarnessNotInstalled` and
+`BrowserUnavailable` come out of `ensure()`.
+
+**The supervisor.** `HarnessSupervisor` (one per gateway, `get_supervisor(home)`)
+brings browser, relay, daemon and worker up in `ensure()` (serialised: a second
+caller waits for the first), reports `status()` (`installed`, `version`,
+`wanted_version`, `browser {kind, headless}`, `connection`
+`connected|waiting_allow|disconnected|error`, `detail`, `agent_tabs`, `chromium`),
+and stops all of it in `stop()`. `waiting_allow` has no deadline because the
+connection is what keeps Chrome's Allow sheet on screen. The gateway stops the
+supervisor on shutdown and before an in-place restart's exec
+(`server_runtime/browser_lifecycle.py`, registered with `pre_exec_stops`), and
+reclaims a stray daemon from a previous life at startup.
+
+### The browser
+
+| Host | Browser | First run |
+|---|---|---|
+| macOS, Linux desktop, Windows with Chrome | the user's Chrome | enable `chrome://inspect/#remote-debugging` once, then Allow |
+| Windows without Chrome | Edge | same |
+| Server, no display, remote gateway | Kiro's Chromium, `--headless=new --remote-debugging-port=0 --user-data-dir=<data-home>/browser-profile` | none |
+| Chrome's `RemoteDebuggingAllowed` policy is off | Kiro's Chromium | none |
+
+A snap-packaged Chromium is skipped: snap confinement breaks the debugging port.
+`--no-sandbox` is added only when the gateway runs as root. Kiro's profile is a
+`HIDDEN` crew-home leaf: cookies from a takeover login stay there and the agent
+cannot read the file. `browser.choice` (`auto|user_chrome|kiro_chromium|headless`)
+overrides the order by hand.
+
+Chrome 144+ asks "Allow remote debugging?" once per connection. The supervisor's
+`waiting_allow` state never times out that prompt; the live card shows the one
+step ("click Allow in Chrome") until it is answered.
+
+### The relay
+
+- **One upstream connection.** The relay listens on `127.0.0.1:0` and hands its
+  URL to the daemon alone; nothing in the agent sandbox learns the port.
+- **Disjoint ids.** Every daemon request is renumbered and mapped back on reply,
+  so several clients never collide; the relay's own requests use ids from
+  1,000,000,000 up.
+- **Private sessions.** The relay attaches its own flat sessions for screencast
+  and input. Replies and events on those sessions stay in the relay and never
+  reach the daemon's shared event buffer.
+- **Agent tabs stay live.** Every target the daemon creates gets focus emulation,
+  so a tab behind another tab keeps painting and Harness's input calls on it do
+  not hang. The user's own tabs are never attached.
+- **Tab ledger.** Each target the agent creates is recorded at the create reply,
+  whether or not the page then loads; `tabs` lists only those and session end
+  closes only those.
+- Late `screencastFrameAck` errors after a stop are swallowed; close is clean.
+
+### The stream
+
+`Page.startScreencast` on a relay-owned session: JPEG, quality 60, 1280 wide.
+Chrome emits a frame only when the page changes, so a still page costs nothing.
+The relay acks a frame to Chrome only after the card has acked that frame's
+sequence number (bounded at 2 s, so a card that stopped acking slows the stream
+instead of freezing it, and the bounded wait counts as a late frame), on a fixed
+time grid (`due = max(last_due + period, now - period)`), so transit time counts
+toward the interval. Measured in the RFC: 57.6 fps headed and 57.8 fps headless
+at cap 60 on macOS (53.5 under ack-after-sleep; headed Chrome tops out near 95
+fps on a 120 Hz display, headless Chromium's compositor is clocked at 60, and
+lifting the cap reaches 81-84 fps at about 450% CPU, so the product does not).
+
+Once a second the stream picks a rung of the ladder:
+
+| Rung | fps | quality | width |
+|---|---|---|---|
+| 0 | 60 | 60 | 1280 |
+| 1 | 45 | 55 | 1280 |
+| 2 | 30 | 50 | 1280 |
+| 3 | 30 | 45 | 960 |
+| 4 | 20 | 40 | 960 |
+| 5 | 15 | 40 | 800 |
+| 6 | 10 | 35 | 640 |
+| 7 | 5 | 30 | 640 |
+
+It steps down at once when more than 20% of frames arrive later than 1.5
+periods or the link cannot carry the rung, as far as the measured rate needs;
+it steps up after 2 calm seconds to the best rung the link covers with 30%
+headroom. An fps change is free; a quality or size change restarts the
+screencast on the same session. An off-screen or collapsed card stops the
+screencast (the card reports visibility). Input sent with no frame for 3 s
+restarts it. While the person holds the browser the stream is pinned to the
+15 fps rung. `browser.live.*` holds the knobs: `enabled`, `quality`
+(`auto|high|medium|low`), `max_fps` (15|30|60), `mask_passwords`; `max_fps` and a
+fixed `quality` set the ladder's top rung. They are read per stream start from the
+live config snapshot, so a Settings change applies to the next turn, never to a
+cast under the person's hands. With `mask_passwords` (default on) the page is
+asked, at most every 250 ms, for the boxes of visible `input[type=password]`
+(a read-only `querySelectorAll` + `getBoundingClientRect` on the relay's own
+session), scaled from CSS to frame pixels; a failed query keeps the last boxes
+rather than unmasking. Every clock read and sleep is injected, so the ladder is
+tested on a fake clock.
+
+**Wire.** Owner websockets only. State changes are the JSON event
+`browser_live` (`session_key`, `turn_id`, `state`, `url`, `title`, `browser`,
+`headless`, `step`, `steps`, `rung`, `fps`). Frames are BINARY messages: a
+4-byte big-endian header length, a UTF-8 JSON header
+(`{"type":"browser_frame","session_key","seq","w","h","mask":[[x,y,w,h],...]}`),
+then the JPEG bytes. `mask` holds the boxes of focused or visible password
+fields, asked of the page before the frame is sent and painted over by the card.
+`detail` rides on a `state: error` event and is rendered verbatim.
+
+**The hub and the turn.** `live_hub.LiveHub` holds one `LiveSession` per slot
+key: turn id, step strip, state (`waiting_allow | live | in_control | done |
+login_needed | error`), input lock and stream. The glue is in the op route
+(`dashboard/handlers/browser_ops.py`), the one place that knows both the session
+and the browser: the FIRST `browser` op of a turn opens the hub's turn with a
+fresh `turn_id` (stable until the chat runner closes it from `_end_turn_tail`,
+`chat_turn/queue_cycle.py`, when the agent's turn ends), every op is a step, and
+after each op the card follows the daemon's current tab -- one cheap
+`current_tab` helper call; a new target (first op, `tabs new`, `tabs switch`)
+starts or restarts the screencast on it, the same target only refreshes the
+address pill. While the owner's Chrome shows its Allow sheet the op route tells
+the hub `waiting_allow`, bounded at 60 s per op (the Allow sheet itself outlasts
+the op). The session key the shim resolves (`dashboard:<slot>` or the bare slot)
+and the key the card posts (`activeSlot`) meet through
+`state_parts.slot_directory._normalize_slot_key`.
+
+### Takeover
+
+Clicking the frame posts `POST /api/browser/input/claim`. Every live-view and
+input route (`/api/browser/live/visibility`, `/api/browser/live/ack`,
+`/api/browser/input/claim`, `/api/browser/input/release`,
+`/api/browser/input/event`, `/api/browser/live/open-in-browser`) accepts the
+dashboard owner's cookie or token and refuses the internal secret with 403, so
+an agent cannot claim input for itself, and validates that the caller owns the
+session. While claimed, mouse, wheel and key events from the card go to
+`Input.dispatchMouseEvent` / `Input.dispatchKeyEvent` on the relay's input
+session; keystrokes are never logged and never enter the transcript. The event
+body is `{type: mouse|wheel|key, action: down|up|move, x, y, button, clicks, dx,
+dy, key, code, text, modifiers}` in frame pixels (`action` is what lets the card
+drag and hold keys; without it a mouse event with a `button` is a click and one
+without is a move), every field bounded before it is sent (`InputEventError`
+`invalid_input_event` otherwise). Every agent op returns the error code
+`user_in_control` at once instead of waiting, and the turn's thinking line reads
+"Waiting for you to hand the browser back". Esc or "Hand back" releases; the
+turn's end releases too. "Open in Chrome" (`Target.activateTarget` +
+`Page.bringToFront`) focuses the real window for what the frame cannot carry (a
+password manager's autofill popup, a file picker). The six routes refuse the
+internal secret (403 `internal_secret_required`), require the dashboard owner
+(403 `owner_only`) and accept only a `session_key` naming a slot this dashboard
+owns (404 `unknown_session`).
+
+### The live card
+
+One card per turn, attached to the turn's first `browser` call (anchor =
+`tool_call_id`, else `ts`), rendered after the turn's last browser row and never
+folded; a new `turn_id` closes the previous record as done. Takeover grows the
+same element; it never swaps in another component. Frames are decoded from the
+binary message (the TS mirror of `decode_frame`, every field checked), acked ONCE
+per `seq` even when no live turn shows them (so the relay never stalls), kept in
+a ring (1800 frames / 48 MB) and painted to a `<canvas>` outside React's render
+cycle (`createImageBitmap`, newest frame wins, mask boxes after the image); the
+first frame is the one React render, later frames none. Visibility is posted only
+on a change of (any card instance intersecting) AND (document visible). A claim
+is optimistic and reverts on a refused POST; Esc releases and is never
+forwarded; nothing on the input path is logged. Replay plays the frames the
+stream already sent, kept in memory for the life of the page, original spacing
+capped at 500 ms per gap. Strings live at `pages.chat.browserLiveCard.*`.
+
+| State | Shows |
+|---|---|
+| Waiting for Allow | which browser, the one step, no timeout |
+| Live | address, live dot, which browser, Take over, frame, current action, step strip |
+| Hover | "Click to take over" |
+| In control | grown card, accent border, "You are in control", Open in Chrome, Hand back (Esc) |
+| Done | one line: thumbnail, step count, duration, Replay, Last frame, Open in Chrome |
+| Login needed | "Take over to sign in" |
+| Error | the thumbnail and `detail` through `ErrorNotice` |
+
+The Allow face's "Use Kiro's own browser instead" opens `/settings/browser`.
+
+### The tool
+
+`browser` is one MCP tool in the `kirocrew-core` shim with fourteen ops
+(`browser_harness.ops.OPS`), not a tool namespace. The shim runs two gates before
+anything leaves the process: `capabilities.browse` governance (a denial refuses
+outright; there is no other browser) and the navigate gate (public http(s) only,
+plus the exact loopback `host:port` entries of `dashboard.browser_local_origins`,
+never the gateway's port; applied to `navigate` and to the URL a new tab opens
+with). It then posts `{session_key, op, args}` to `POST /api/browser/op` (strict,
+internal-secret only) and renders the gateway's answer. It holds no state.
+
+`browser_harness.ops.run_op(op, args, ctx)` runs in the gateway. It reaches the
+browser only through `ctx.helper(name, **kwargs)` -- one allowlisted Harness
+helper over the daemon's IPC -- and the `js` helper is only ever given
+`snapshot_walker.js` plus one method call. The walker installs `window.__kcWalker`
+per document; it mints `eN` refs into `window.__kcRefs` (dropped when the element
+leaves the DOM), never reads a password or credential-shaped value, and hooks
+`console.*` so `console` returns in-page messages since the last navigate or
+snapshot.
+
+| Op | Behaviour |
+|---|---|
+| `navigate`, `back` | stamp the old document and wait for a new one (or a matching href) with an injected clock |
+| `snapshot` | the accessibility walker, run in the page; refs are per snapshot |
+| `click` | a ref or `x`,`y`; `clicks: 2` is a double click |
+| `drag`, `hover`, `scroll` | ref or coordinates (`mouse_move` / `drag` helpers) |
+| `type` | refuses a password field twice: by the ref's type and by whatever holds focus when the text would land |
+| `press_key`, `select_option`, `wait_for` (text / textGone / time / load), `console` | as named |
+| `screenshot` | writes a PNG under the screenshot directory below and returns its absolute path |
+| `tabs` | lists and switches `relay.agent_targets()` only |
+
+Every op calls `live_hub.step`; while `live_hub.in_control` the op returns
+`user_in_control` at once. A refusal is a value (`{ok: false, code}`); a transport
+failure is the route's `browser_error`; `timeout` is the route's budget (20 s, 75 s
+for the slow ops); `not_installed` comes from `browsing_available(home)`. The
+`{{BROWSER_BEGIN}}..{{BROWSER_END}}` section of `config/prompt.md` and every
+builtin skill that drove a browser (`web-browse`, `web-verify`, `web-preview`,
+`browser-auth`, and the rest) speak only of this tool; `browser-auth` is "take
+over to sign in".
 
 ### Capability model
 
-**Presence of a vetted `playwright-cli` launcher is availability, not approval.**
-The product-managed copy lives at `<data-home>/playwright-cli` and is
-read-only inside every agent sandbox. Gateway execution resolves that leaf first,
-then fixed system install directories whose launcher, Node executable and package
-entry hierarchies the gateway user cannot write. The managed installer stages the
-native Node executable inside the same leaf, and every gateway-owned invocation
-runs that copy plus the attributed `playwright-cli.js` directly; neither a POSIX
-`env node` shebang nor a Windows batch launcher chooses the runtime. Resolution
-never uses `PATH`, `~/.local/bin`, the active project, or the workspace. No safe
-direct pair means the gateway capability does not exist; installing one makes the
-command available but does not let a shell turn skip the ordinary approval
-ladder. A dashboard session must receive an interactive command grant, a
-trusted-command pattern, or an explicit trust/auto-approve mode before the
-command runs without a prompt.
+**An installed driver is availability, not approval.** The tool is always
+advertised and checks `capabilities.browse` governance on every call; a
+governance denial refuses outright and never falls back to another driver,
+because a fallback would let browsing continue and defeat the control
+(`mcp_core_parts/governance.py`). The browser-not-installed case is a plain
+refusal that points at Settings → Browser.
 
-The agent prompt follows the same availability. The shipped `config/prompt.md`
-marks its `## Browser` section with `{{BROWSER_BEGIN}}` and `{{BROWSER_END}}`.
-A session that starts while no vetted launcher resolves, so the `browser` tool
-refuses every op, gets a short pointer in its place (`web_fetch`, Settings →
-Browser). A launcher that resolves, or a state that cannot be read, keeps the
-section.
-
-The CLI exposes no capability toggle of its own: once an approved shell turn
-runs the binary, all of its verbs are reachable. `dashboard.use_builtin_browser`
-(default `true`) selects the native MCP path in the desktop app; turning it off
-routes allowed browsing to the CLI and does not override the governance
-`capabilities.browse` denial. That limitation does not turn binary presence into
-consent for automatic CLI execution.
-
-#### Approval boundary
-
-A working product-managed copy or vetted system install grants no silent
-execution authority. The managed bin directory leads the agent subprocess PATH so
-an approved shell command can keep spelling `playwright-cli`, but the sandbox
-withholds writes to the whole prefix. Gateway code never consumes that PATH. A
-shim planted in `~/.local/bin`, the project, the workspace, or another writable
-PATH directory is diagnosed once at WARNING and ignored.
-
-The first CLI command prompts under normal mode. The operator can approve once,
-trust the command pattern for the session, or deliberately enable wider
-auto-approval. The last two choices are ordinary audited trust decisions and
-remain subject to the deny and governance gates. The native `browser` tool has a
-separate bounded surface: governance is checked before dispatch, and `navigate`
-auto-drives only public HTTP(S) targets. Literal loopback, private, link-local,
-reserved, alternate- or percent-encoded IP or host name, non-ASCII host,
-parser-differential, and non-HTTP
-forms are refused and directed to the approval-gated CLI path; DNS names are not
+`navigate` auto-drives only public HTTP(S) targets. Literal loopback, private,
+link-local, reserved, alternate- or percent-encoded IP or host name, non-ASCII
+host, parser-differential and non-HTTP forms are refused; DNS names are not
 resolved, so public-name-to-private-address rebinding remains an accepted
-residual.
-
-The one exception is `dashboard.browser_local_origins`, an operator-written list
-of exact loopback origins (`localhost`, `127.0.0.1` or `[::1]` plus a required
-port, e.g. `localhost:5173`). The config coercer drops every other shape, so an
-entry can never name a bare host, a private or LAN address, or an alternate
-encoding. The tool admits a `navigate` whose own `host:port` (default port
-filled in from the scheme) equals an entry byte for byte, after the same
-parser-differential refusals and with userinfo refused outright; the gateway's
-own API port is refused even when listed, and an unknowable gateway port
-refuses too. The list is read fresh per call and fails closed to empty. The
-agent cannot extend it: `config.json` is read-only inside the sandbox (with `sandbox: off` that
-fence is gone, as it is for every other setting), and
-`PUT /api/dashboard/config` does not accept the key, so it is set only with
-`kirocrew config set` from the operator's own terminal or by editing the file. **Accepted residual:** once a listed
-page is open, `click`/`back` follow whatever that page links to, the same
-residual a public page already carries, since only `navigate` is URL-gated.
-
-### Install flow
-
-Global install only. `npx` re-resolves the package through the npm registry on
-every invocation, which makes browsing depend on registry auth at run time: an
-expired token takes the capability down mid-session. A global binary resolves
-once, at install, so registry auth applies at install time only.
-
-1. Detect a vetted managed or fixed-system `playwright-cli`, plus Node.js 20 or
-   newer. Resolution never consults `PATH`.
-2. Install when absent: `npm install -g --prefix <data-home>/playwright-cli
-   @playwright/cli@latest`. The installed version comes from the attributed
-   package's `node_modules/@playwright/cli/package.json`, read directly on the
-   two rare detection and Browser-view spawn paths. The prefix holds the
-   entrypoint and package tree.
-   The sandbox pre-creates this directory and exposes it read-only to agent
-   descendants; the gateway installer runs outside that sandbox. Before npm
-   receives the prefix, the installer creates the leaf and pins it with the
-   cross-platform no-follow directory opener; a symlink, Windows reparse point,
-   or create/open identity race aborts before package files are written, and the
-   Windows handle prevents rename while npm runs. On every OS the installer
-   resolves the native executable behind any version-manager shim and atomically
-   stages it inside the same leaf (`gateway-node` on POSIX, `node.exe` on
-   Windows). Gateway-owned calls invoke that sealed Node with
-   `@playwright/cli`'s JavaScript entrypoint directly. Generated POSIX wrappers
-   and Windows `.cmd` launchers remain shell-facing identities only, so neither
-   PATH-based interpreter selection nor command-processor reparsing reaches a
-   gateway request.
-   The bootstrap itself is the one step that still reads the gateway's
-   environment: `npm` and the source `node` are resolved ONCE per install
-   through `env.find_node_tool` (version-manager dirs, then the gateway `PATH`),
-   and those same paths are what run. No trust policy refuses them — nvm, fnm,
-   volta and mise all install into user-writable directories under `$HOME`, so
-   rejecting writable toolchains would break most real installs. Instead the
-   installer logs each resolved path, its symlink-resolved target, and the first
-   component of its hierarchy the gateway user can write
-   (`install.bootstrap_tool_provenance`, built on the same
-   `_gateway_writable_component` walk the CLI resolver refuses on, so the two
-   cannot disagree). `kirocrew doctor` prints the same answer as `browser npm:` /
-   `browser node:` rows: ✅ when nothing is writable; ℹ️ when the writable
-   component is owned by the gateway's own account with no group/other write bit
-   — nvm, fnm, volta and mise under `$HOME`, and Homebrew's 0755 user-owned
-   `/opt/homebrew` prefix (its `g+rwx` subdirectories sit below the prefix, which
-   the walk reaches first), which only an account that already runs the gateway
-   can replace; ⚠️ when it is group- or world-writable (another account could
-   swap the binary, as with a legacy root-owned `/usr/local` over a `g+rwx`
-   `bin`) or owned by a different account. The warning is never recorded as a doctor issue.
-   Doctor repeats the lookup with its OWN shell's `PATH`, which can differ from a
-   service-managed gateway's, and its rows say so; the install-time log line is
-   the authoritative record of what ran. Writability is reported as unchecked on
-   Windows, where `os.access` ignores ACLs.
-3. `playwright-cli install-browser chromium` for the baseline browser binary.
-   The engine argument is required: omitting it installs every engine and lets an
-   optional Firefox or WebKit dependency failure veto a working Chromium setup.
-   The CLI downloads Chromium on first use regardless, so the explicit step exists
-   to give the operator a progress surface and a visible failure rather than a
-   stall inside the first browse. `--with-deps` is appended only on an apt host,
-   and a refusal there is retried without it; OS libraries on every other host
-   are a separate operator action — see [OS dependencies](#os-dependencies).
-4. `playwright-cli install --skills agents --global` so the command reference is
-   discoverable from the skill file rather than occupying the system prompt.
-   `--skills` accepts `claude` (default) or `agents`; `--global` targets the home
-   directory instead of the workspace.
-5. Record that the install happened.
-
-Every Node child these steps start (npm, the CLI, and the browser download it
-forks) receives `NODE_USE_SYSTEM_CA=1` through `install.cli_env`, unless the
-user already set that variable. Node then trusts the OS certificate store as
-well as its bundled roots, so a corporate TLS-intercepting proxy whose CA the OS
-trusts works without exporting a PEM file. This matters most for a GUI-launched
-gateway, which has no shell profile. A variable is used instead of
-`--use-system-ca` in `NODE_OPTIONS` because a Node older than the feature
-ignores an unknown variable but refuses to start on an unknown flag.
-
-The next install writes the vetted managed copy. A launcher left by an older
-release at `~/.local/bin/playwright-cli` is left untouched and ignored; no cleanup
-or fallback executes it.
-
-#### Installer modules
-
-`browser_cli/install.py` is the import path every caller and test uses. It keeps
-detection (`detect`, `available`, the installed CLI version and the
-standalone-installer command) and the install steps (`install`, `install_browser`
-and the `_step` runner they share). What those stand on lives in sibling modules,
-and new work for one of these responsibilities goes to its module:
-
-| Module | Owns |
-|---|---|
-| `browser_cli/install_runner.py` | Running an installer child: the time budgets, `cli_env`, `InstallScope` and `run_in_scope`, the one spawn (`_run`), and `redact_install_output` |
-| `browser_cli/install_launcher.py` | Which `playwright-cli` runs: the managed tools leaf and the Node staged into it, candidate vetting (`cli_path`, `legacy_launcher_refused`, `bootstrap_tool_provenance`), the Node version probes, `@playwright/cli` package attribution, and the direct argv (`cli_command`) |
-| `browser_cli/install_seams.py` | The upstream seam verdicts: `SeamSupport`, `cli_lifecycle_env_support` and `cli_dashboard_socket_support` |
-| `browser_cli/install_browsers.py` | The browser cache: where the CLI downloads browsers, the revision it requires, `browser_status` and `browsers_present` |
-
-`kiro_crew.browser_cli.install` is a mirror facade (`kiro_crew._facade_mirror`) over
-those four owners, lowest layer first in the order of the table. It keeps its whole
-import block, so every name it held before the split still resolves as
-`kiro_crew.browser_cli.install.<name>` and is the same object, and a patch through it
-reaches every owner that binds the name. An owner never imports the facade, and
-imports another owner only from a row above its own. The owners log as
-`kiro_crew.browser_cli.install`, and `SeamSupport` and `InstallScope` keep that
-module name. `browser_cli/install_job.py` is the dashboard's job record, a caller of
-the facade rather than an owner. `test/test_install_facade.py` pins the contract.
-
-### Install jobs
-
-The gateway owns one install slot. The CLI setup above and a single-engine
-download (`POST /api/browser/engine`) both run in it as a **job**, and the job,
-not the page that clicked, is what the settings panel renders. A refreshed page or
-a second tab therefore sees the same operation, engine, stage and elapsed time.
-
-| Field | Meaning |
-|---|---|
-| `kind` | `cli_setup` or `engine_download` |
-| `engine` | the engine an `engine_download` fetches; `null` for `cli_setup` |
-| `status` | `running`, `succeeded`, `failed`, `interrupted` |
-| `stage` | `preparing`, `installing_cli`, `downloading_browser`, `installing_skills`, `finishing` |
-| `error_code` | `step_failed`, `timeout`, `exception`, `interrupted`, or `null` |
-| `error_detail` | the decisive step's output, redacted in full and then cut to 2000 characters |
-
-- The job is published (`running`, `preparing`) before its worker starts, so no
-  poll can observe the slot busy with nothing to show.
-- Stages come from a callback the installer calls between steps, never from
-  parsing its stdout. The worker thread marshals each one onto the event loop,
-  and an update carrying another job's id is dropped, so a late callback cannot
-  overwrite a newer job.
-- The last step decides the outcome, as before: a recovered attempt stays in the
-  step list without failing the job.
-- The latest terminal job is kept until the next one replaces it, so a poll that
-  arrives after completion still sees the result.
-- `POST /api/browser/install` joins a running `cli_setup` job. Any other running
-  job answers **409** `install_already_running` with that job's snapshot, from
-  either endpoint; the owner check and the 400s for a malformed body run first.
-- `installing` and `last_error` are kept for older clients and are derived from
-  the job.
-- Job state is in memory. A restarted gateway reports `install_job: null`, never
-  a stale running job, and nothing resumes on its own.
-- Installer children run in their own process group. A timeout kills the whole
-  tree rather than only the direct child. Both the dashboard and API-only
-  lifecycles register `_register_browser_install_cleanup` before runner setup;
-  cancelling the job task at shutdown kills the tree and marks the job
-  `interrupted`.
-- **Accepted residual:** a restart path that ends the process with `os._exit`
-  skips that cancellation, so an installer running at that moment finishes on its
-  own. Playwright's registry directory lock serializes a duplicate browser
-  download; a concurrent `npm install -g` into the managed prefix is not guarded.
-
-### Readiness
-
-`browser_ok` answers "is a build at the revision the installed CLI requires on
-disk". A cache directory carries its revision (`chromium-1232`), and
-playwright-core launches only the exact revision bound to its own version, so the
-match is **exact** on the revision the CLI requires. A prefix match ignores the
-revision, and a stale
-`chromium-1208` left from before a CLI upgrade then reads as present while the
-launch fails `Browser "chromium" is not installed` — and because the gate reads
-ready, the panel never offers the download that would fix it. The prefix form also
-let `chromium_headless_shell-<rev>` satisfy `chromium`, which is a different
-artifact.
-
-The required revision comes from `playwright-core/browsers.json`, the file
-`install-browser` itself consults. Reading it is a plain file read, so readiness
-stays subprocess-free.
-
-**The manifest is attributed to a `@playwright/cli` package, never searched for.**
-Resolution anchors on that package — the hoisted sibling in the same
-`node_modules`, a copy nested under the package, or the standalone installer's
-known prefix (`KIROCREW_PLAYWRIGHT_CLI_HOME`, else `<data home>/playwright-cli`).
-Anchoring is a correctness property, not an optimization: walking ancestors
-instead passes through `$HOME` on the standalone layout, where one unrelated
-`~/node_modules/playwright-core` supplies a revision from a **different** install.
-That reports a working browser broken and keeps doing so after the offered
-download, because the gate goes on reading the foreign file. The standalone prefix
-is probed by path because that installer generates a **wrapper script** rather
-than a symlink, so its package tree is not an ancestor of the launcher at all.
-
-When no manifest can be attributed, the revision is unknown and readiness falls
-back to the older presence-only answer: any complete `<engine>-*` build counts,
-and so does a complete `<engine>_<host>_special-*` build, since without a required
-revision there is nothing to hold either directory against.
-Absent metadata is an unknown, not evidence of a stale cache, so it must not turn
-a working browser into a reported broken one.
-
-**A directory is not a download.** The installer creates the revision directory
-before it finishes, so a build counts only when that directory holds Playwright's
-`INSTALLATION_COMPLETE` marker. Checking the marker is a file read; readiness
-never launches the build.
-
-Per-engine readiness is reported as `browser_status`:
-
-| Value | Meaning |
-|---|---|
-| `downloaded` | the required-revision directory (or its platform `_special` override) holds the completion marker |
-| `missing` | the cache was read and holds no complete build, including one an interrupted download left behind |
-| `unknown` | the cache or marker could not be read, the platform has no known cache location, or the expected directory is absent or incomplete while a complete build the ported host-platform key did not predict exists: a `<engine>_*_special-*` build when the plain one was expected, or the plain required-revision build when a `_special` one was (only playwright-core's own platform logic picks the directory, so the ported key may be stale against the installed CLI) |
-
-`browsers[engine]` is true only for `downloaded`, and `browser_ok` is
-`browser_status.chromium == "downloaded"`. "Downloaded" is filesystem evidence;
-whether the build launches is a separate fact the panel does not claim.
-
-The cache location follows playwright-core's registry, so detection looks where
-the installer writes:
-
-| Setting | Cache |
-|---|---|
-| `PLAYWRIGHT_BROWSERS_PATH` (also `npm_config_…` / `npm_package_config_…`) | that path; a relative value resolves against `INIT_CWD`, else the gateway's working directory |
-| `PLAYWRIGHT_BROWSERS_PATH=0` | `.local-browsers` inside the CLI's own `playwright-core` package |
-| Linux | `$XDG_CACHE_HOME/ms-playwright`, else `~/.cache/ms-playwright` |
-| macOS | `~/Library/Caches/ms-playwright` |
-| Windows | `%LOCALAPPDATA%\ms-playwright`, else `~\AppData\Local\ms-playwright` |
-
-### Command surface
-
-The full reference lives in the skill the CLI installs in step 4, which is why the
-system prompt states only the loop and the ref rule. The CLI is installed at `@latest`
-(`install.py` `NPM_SPEC`), so its verbs can drift; the table below is a summary, and the
-installed skill is authoritative. The verbs:
-
-| Group | Commands |
-|---|---|
-| Lifecycle | `open [url]`, `goto`, `close`, `attach --extension` |
-| Pointer and form | `click <ref>`, `dblclick`, `fill <ref> <text>`, `type <text>`, `select`, `check`, `uncheck`, `hover`, `drag`, `upload` |
-| Read | `snapshot`, `screenshot [ref]`, `pdf`, `eval`, `console`, `requests`, `request <i>`, `request-headers`/`request-body`, `response-headers`/`response-body`, `network-state-set` |
-| Navigation | `go-back`, `go-forward`, `reload`, `press <key>`, `resize` |
-| Dialogs | `dialog-accept`, `dialog-dismiss` |
-| Tabs | `tab-list`, `tab-new`, `tab-select`, `tab-close` |
-| State | `state-save [file]`, `state-load <file>`, `cookie-list`/`get`/`set`/`delete`/`clear`, `localstorage-*`, `sessionstorage-*` |
-| Capture and scripting | `route`, `run-code`, `tracing-start`/`stop`, `video-start`/`stop` |
-| Host | `show`, `install --skills`, `install-browser`, `config-print` |
-
-Sessions are selected with `-s=<name>` on any command.
-
-### Generated session reachability
-
-Each agent process receives a generated `PLAYWRIGHT_CLI_SESSION`
-(`kc-<random>`). For generated sessions only, `PWTEST_SOCKETS_DIR` and
-`PWTEST_DAEMON_SESSION_DIR` point at separate short namespaces under
-`<data-home>/pw/<8hex>/s` and `/d`. A `playwright-cli list` in one agent
-therefore cannot enumerate peer chat families. Operator-configured PWTEST roots
-are treated as base directories and receive the same generated-session
-namespace. Relative configured roots are rejected because the gateway and agent
-working directories can differ. Operator-provided non-`kc-` session names
-preserve their complete existing Playwright environment and are not redirected.
-
-Keeping both locations outside scratch means a daemon remains reachable after
-its agent process or scratch directory is gone. Operator cleanup supplies the
-generated session's `/s` and `/d` paths with the corresponding PWTEST variables
-and then uses the ordinary `playwright-cli -s=<name> close` protocol.
-Reclamation never executes the CLI or connects to a daemon's socket: a stray has
-no registry entry to resolve and its socket is unlinked by the first refused
-connect, so a registry-driven `close` reclaims nothing. (The gateway does run the
-CLI for its own two purposes — the `show` dashboard and the address bar launcher
-— but never against a generated `kc-` session, and never to reclaim one.)
-
-### Stranded daemon reclamation
-
-Reachability alone does not reclaim a daemon whose agent died, so the orphan
-sweep (`session_pid`) carries a browser-daemon class alongside its MCP,
-gatewayd and work classes. playwright-core spawns the daemon as `node
-<...>/entry/cliDaemon.js <session-name>` with `detached: true` and no `env`
-override, which decides both halves of the identity. Detachment makes it its
-own session and process-group leader, so it is invisible to the teardown child
-snapshot, to `kill_process_tree`, and to the SID ownership test the work class
-uses. Inheriting the environment verbatim puts the generated
-`PLAYWRIGHT_CLI_SESSION` and `KIROCREW_SPAWNED` in its exec-time environ, which
-the kernel holds immutable after exec.
-
-A daemon is reclaimed only when all of these hold: a structural cliDaemon argv
-whose following element is a generated `kc-<8hex>` name; that same name in its
-exec-time environ; the `KIROCREW_SPAWNED` marker; no live process outside the
-daemon's own SID still holding that session; and an age past the work-class
-floor. The owner scan remains fail-closed for unreadable process data. One
-kernel relationship makes the common systemd case decidable: a process whose
-stable unified cgroup v2 membership differs from the daemon's cannot belong to
-the spawn tree that inherited its generated browser session, so an unreadable
-environ there is ignored. This excludes system stubs such as `(sd-pam)` and
-`sshd-session` without a growing name list. Recognizable agent, gateway, shell,
-and browser-tooling process names remain plausible owners in every cgroup. Only
-a positively named non-owner with proven different cgroup membership is
-ignored. A same-cgroup process, unreadable process name, unreadable cgroup, or
-cgroup that changes during the probe also keeps the daemon. A DEBUG verdict records `decision=keep|sweep` and a closed `reason`,
-with a separate owner-probe line when an unreadable different-cgroup process is
-ignored or an inconclusive owner keeps the daemon. Ownership is therefore
-proven from kernel facts alone -- argv, exec-time environ, session id, cgroup,
-and process liveness -- never from filesystem state a same-UID agent could
-write, which is what made earlier reaper attempts unsafe. The probe scans the
-whole process table rather than a manager-local set, so a peer gateway sharing
-this data home sees and protects its own live sessions. An operator-named
-session is structurally excluded and never signalled; the `kc-` prefix is
-reserved so the two populations cannot be confused. The Browser
-panel's own sessions (`panel-<owner6>-<slot8>`, see [Address bar
-launcher](#address-bar-launcher)) are deliberately in the operator-class
-population: a generated name would have the sweep kill the human's browser the
-moment its short-lived CLI invocation exited, so their lifetime is owned by the
-gateway instead — and **the owner is legible from the name**. Several gateways
-on one host can share the CLI's session registry (it is keyed by working
-directory; a pod started from the live checkout, or a second install, sees the
-same entries), so the first six hex digits are a digest of the owning gateway's
-data home: a sibling never produces this gateway's tag, a `goto` against a
-session already open under our name can only be reaching this gateway's own
-previous life, and only sessions under our prefix are ever closed. Two hooks
-enforce that: shutdown closes every session this life opened (`close_all`), and
-startup closes every session under this gateway's prefix that the CLI still
-lists as up and this life has not recorded (`reclaim_stranded`, a background
-task so a CLI spawn never gates the port bind) — the previous life that died
-without reaching its shutdown hook. A panel session therefore never outlives the
-gateway that owns it; an unclean death only defers the close to the next start.
-**Accepted cost:** there is no idle timeout, cap or LRU on `panel-` sessions —
-one Chromium daemon per chat slot whose address bar was used, alive for the
-gateway's life. The bound is a dashboard's handful of slots, a human's open
-browser is exactly what must not be closed under them (their logins live in it),
-and the human closes one themselves from the framed grid when they are done;
-a close policy is a follow-up if that bound is ever exceeded in practice.
-What startup reclamation reads is the registry, same-user-writable filesystem
-state the sweep above refuses to act on — acceptable here because the only
-action it can be tricked into is a `close` of a session under our own prefix, a
-capability a same-user process already has directly (see the Security table).
-Every stage fails
-closed: non-Linux, an unreadable `/proc`, and an inconclusive per-process read
-all read as "owner alive". The kill signals the process GROUP so the Chromium
-tree goes with the supervisor, TERM first for a clean profile flush, only for a
-genuine isolated group leader, with identity re-verified before escalating to
-SIGKILL and the result SEL-audited.
-
-Deliberately not keyed on the socket path the way the gatewayd class is:
-`Session._connect` unlinks the socket whenever a connect fails, so an absent
-socket records a refused connect rather than an unreachable daemon, and the
-daemon holds its listening descriptor either way.
-
-The generated socket root is rejected when its worst-case AF_UNIX path exceeds
-the upstream 103-byte budget. Before either variable is injected, the installed
-`@playwright/cli` package resolved from the active launcher is checked through
-the same package anchor as browser revision detection (a stale standalone
-fallback is never accepted), and its serving `playwright-core` sources must
-contain both hooks on their execution paths (`process.env.PWTEST_SOCKETS_DIR ||`
-and `process.env.PWTEST_DAEMON_SESSION_DIR`). A future upstream
-rename/removal therefore logs a warning and fails back instead of silently
-returning sockets to scratch. The source verdict is cached by path, mtime, and
-size so an upgrade invalidates it.
-
-Kiro-Crew-owned lifecycle directories are created
-owner-only and then restricted with the fail-loud platform helper before their
-environment variables are exported. A crash can leave a small per-session
-registry/socket namespace behind. Reclaiming the daemon does not delete that
-namespace: it is two empty directories, and pruning them would need its own
-liveness argument for no memory benefit.
-
-### Auth
-
-Two paths, chosen by whose browser holds the session.
-
-**Saved state.** `state-save [file]` writes the current context's cookies and
-storage to a file, and `state-load <file>` restores it into a session. A logged-in
-context is therefore reusable across sessions and across gateway restarts without
-re-authenticating. `cookie-list`/`get`/`set`/`delete`/`clear` and the
-`localstorage-*` / `sessionstorage-*` families operate on individual entries when
-a whole-state round trip is heavier than the task needs.
-
-**Attach.** `attach --extension` connects to the operator's own running Chrome,
-which already holds their logins, so no state file is involved. This is the
-stronger capability of the two: the sessions are the operator's real ones, which
-is why the [approval boundary](#approval-boundary) above is mandatory.
-
-**Which browser the agent drives.** The user's own Chrome comes first, headless
-last. Neither the Browser panel nor `open` is the user's Chrome — both carry none
-of their logins, and `open` is headless — so a task that needs their login, or a
-request for "my Chrome", attaches. `browser_cli/own_browser.py` turns three host
-facts into the one instruction the `browser` tool appends to both of its
-`playwright-cli` fallback texts:
-
-| Host | Instruction |
-|---|---|
-| no Google Chrome installed | headless `open`, which has none of the user's logins |
-| Chrome, but no profile has the extension | ask the user to add it, then attach; headless until then |
-| a profile has the extension, no token in the environment | attach; the user approves in Chrome or pastes the token in Settings → Browser |
-| a profile has the extension and a token | attach |
-
-The probes are `stat`s and directory listings only (`<profile>/Extensions/<id>`
-under Chrome's user data dir), and a probe that fails reads as "not found". The
-token is judged from the environment the attach will inherit, never from the
-stored file, which a sandboxed caller may not see. A user who asks for headless,
-and a gateway reached from another machine, override the table; no host fact sees
-either, so the appended instruction, the prompt and the `browser-auth` skill name
-both in prose.
-
-**Every agent-facing attach command is
-`PLAYWRIGHT_MCP_ISOLATED=false playwright-cli attach --extension=chrome`.** An
-operator config named by `PLAYWRIGHT_MCP_CONFIG` (honoured untouched, see
-[Launch config](#launch-config)) may set `browser.isolated: true`, and
-playwright-core checks `isolated` before `extension` when it creates the browser.
-The attach then prints `attached to chrome` while it launched a throwaway
-in-memory browser on `about:blank`, and only a later `detach` admits
-`was not attached`. The CLI applies environment overrides after the config file,
-so the variable restores the real attach for that one command; without such a
-config it is a no-op, because extension mode already defaults `isolated` to false.
-It stays off the follow-up commands, since the same file may need `isolated` for
-`open`. A leading `NAME=value` is POSIX syntax, so on a Windows host the appended
-instruction gives the PowerShell form (`WINDOWS_ATTACH_COMMAND`), which sets the
-variable for the attach and removes it after. `test_own_browser.py` pins every attach line in the prompt and the bundled
-skills to it. After attaching, the agent checks `tab-list`: a lone `about:blank`
-means it did not reach the user's Chrome and must say so.
-
-State files hold live session credentials and are written with owner-only
-permissions.
-
-**The attach token.** `attach --extension` works without one: the extension
-answers a tokenless handshake by asking the human to approve the connection in the
-browser. Setting `PLAYWRIGHT_MCP_EXTENSION_TOKEN` removes that one click and
-nothing else, so it is opt-in and absent by default. `browser_cli/token.py` stores
-it owner-only behind `security._CREW_SECRET_LEAVES` — the agent inherits it through
-the environment and can never open the file — and no status surface returns the
-value, only whether one exists.
-
-The extension presents the token as a shell assignment, so the settings field
-accepts either form and stores the same token:
-
-```
-PLAYWRIGHT_MCP_EXTENSION_TOKEN=<value>
-<value>
-```
-
-`normalize_paste` strips the prefix only when the text left of the **first** `=`
-is exactly the variable name. That condition is a safety property rather than a
-nicety: these tokens are base64url and can legitimately contain `=`, so a looser
-rule would corrupt a bare token. `export`/`set` keywords and a matched pair of
-surrounding quotes are removed for the same reason. Normalization also runs on
-read, so a stored value holding the whole assignment repairs itself instead of
-reporting "stored" while the extension keeps prompting. Clearing ignores an
-already-absent file, but any other unlink failure propagates through the API so
-the settings panel cannot report success while the credential remains active.
-
-### Launch config
-
-Kiro Crew installs, gates on, and offers downloads for **Chromium**:
-`install-browser` fetches the Chromium build, `browser_ok` is
-`browsers_present()["chromium"]`, and `attach --extension` supports that family
-alone. The CLI's own default is a different browser — the branded Chrome
-*channel*, an OS-level install at a path like `/opt/google/chrome/chrome` that
-Kiro Crew never provisions and cannot install without root. So on a host that did
-everything the product asked, the first browse fails with
-
-```
-Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome
-```
-
-while every readiness signal is honestly green, because the Chromium build really
-is downloaded. `browser_cli/launch.py` closes that gap by naming the engine.
-
-**Why a config file rather than a flag or a browser env var.** All three exist and
-only the file works for a whole session:
-
-| Mechanism | Why it cannot carry this |
-|---|---|
-| `--browser` | takes `chrome, firefox, webkit, msedge` — `chromium` is not accepted |
-| `PLAYWRIGHT_MCP_BROWSER` | the same four values, so it cannot name the installed engine either |
-| `--config` | accepted only on the session-establishing commands (`open`, `attach`) and rejected by the follow-up commands that make up most of a session |
-| `PLAYWRIGHT_MCP_CONFIG` | names a config **file** and applies to every invocation uniformly |
-
-The last one is the mechanism used, and for the same reason as
-[snapshot retention](#snapshot-retention): the agent runs the CLI as a shell
-command, so an inherited environment variable is the only channel that reaches an
-invocation Kiro Crew never constructs. The config is written under the data home
-at a fixed absolute path, independent of whichever working directory a turn ran in.
-
-The schema is **nested** under a `browser` key — `{"browser": {"browserName":
-"chromium"}}`. A flat top-level `browserName` parses without error and selects
-nothing, which presents as the branded-Chrome failure above rather than as a
-config error.
-
-**The generated config names the engine and nothing else.** Every added key
-becomes a default an operator must discover in order to override, and the engine
-is the only one the install flow already decided.
-
-**The browser sandbox is deliberately untouched.** Chromium's sandbox is a
-security boundary, so no generated default removes it. A host that cannot run it —
-a container lacking the kernel permissions, where the failure is
-`No usable sandbox!` — needs an operator decision rather than a default that
-quietly drops the boundary for every host. That is what the escape hatch is for:
-when `PLAYWRIGHT_MCP_CONFIG` is **already set** in the environment, Kiro Crew adds
-nothing and the operator's file wins entirely. Naming a config is how an operator
-selects a different engine, pins an `executablePath`, or accepts the sandbox
-trade-off on a host that requires it.
-
-### Snapshot retention
-
-The CLI writes one timestamped YAML per command and documents no pruning, so the
-directory grows without bound.
-
-**The gateway service prunes it on a schedule.** Retention belongs to a
-long-lived component rather than to the agent for two reasons: the agent has no
-reason to know the policy, and a per-command prune would race the daemon.
-Snapshots are throwaway state, so retention is by age and count. The service
-never deletes a file the current session still refers to, because the path on
-stdout is the agent's only handle to the tree.
-
-This is also why the snapshot directory is at a fixed path the service owns
-rather than relative to whatever working directory an agent happened to have.
-
-### Dashboard integration
-
-`playwright-cli show --port <n> --host 127.0.0.1` serves the CLI's own dashboard
-over loopback HTTP, and the panel embeds that in an iframe. A remote or tunneled
-dashboard reaches the view through the same-origin relay (`/browser-view/<token>/`,
-below), so it needs no extra port. The port is OS-assigned by default;
-`dashboard.browser_view_port` pins it, which matters only for the direct-`url`
-fallback the panel uses when the relay path is not offered. The pin is never handed
-to the child: the supervisor claims the pinned port itself with a bound listener it
-keeps holding, an atomic ownership proof that makes the deterministic,
-operator-named port race-free, and relays byte-for-byte to the child's own
-ephemeral port. With a usable attribution path, the child keeps the unpinned
-path's advisory bind window (unpredictable, loopback-local). On a structurally
-blind host it instead receives port 0 and lets the kernel choose while binding;
-both paths bind loopback only. After the child answers, the supervisor asks
-`platform_compat.probe_port_listeners` who owns its port. A PID in the spawned
-process tree is positive ownership proof. When that global lookup is absent or
-cannot attribute a known listener, the supervisor checks the spawned child and
-its current descendants by PID. Linux follows direct child lists under
-`/proc/<pid>/task/<tid>/children`; macOS uses `proc_listchildpids`. The walk
-starts at the spawned root and reads only PIDs it discovers in that subtree.
-The supervisor captures the root start ID immediately after `Popen` returns and
-stores it with the exact live process handle. Startup, adoption, and reuse all
-require that same handle to remain alive and its current start ID to equal the
-captured value before and after listener confirmation; a mismatch is reaped and
-replaced rather than treated as this Browser view.
-For every candidate PID, parentage and start identity come from one kernel read:
-Linux uses one `/proc/<pid>/stat` value, while macOS uses one
-`PROC_PIDTBSDINFO` value with microsecond start resolution. The shared process-start
-comparator classifies each edge as later, earlier, or inconclusive. A
-strictly later child may join the tree; a strictly earlier child is the stale
-orphan shape and its subtree is excluded. Equal coarse timestamps or unparseable
-identities make the ownership result inconclusive rather than foreign. The
-parent must keep its identity across the child-list read, and each descendant
-must keep its identity around the listener probe. Every PID reported by the
-global listener lookup must also keep a readable start identity across the
-descendant walk. A missing or changed owner makes the verdict inconclusive;
-`FOREIGN` requires every reported owner to stay identity-stable while none
-belongs to the supervised tree.
-
-If the atomic path is unavailable, the POSIX fallback takes two
-`ps -Ao pid=,ppid=,lstart=` snapshots. It derives the root subtree from the
-first snapshot and requires every row in that subtree to remain identical in
-the second; a missing, reparented, or re-identified row makes the whole result
-inconclusive, while unrelated process churn is ignored. Every returned identity
-tags its source as either atomic or `lstart`; listener verification re-reads
-through that exact source. An unavailable source is inconclusive and never
-falls across to a differently encoded identity. Parent and child created in
-the same displayed second therefore yield an inconclusive proof. Windows
-brackets two Toolhelp PID-to-PPID snapshots with the query-only process
-creation-time primitive. Each listener candidate's path to the root must keep
-the same PIDs, creation IDs, and edges; the three-way order rule applies to
-every edge, while unrelated helper siblings may appear or disappear. Each
-positive owner-PID-table observation is bracketed by process-identity checks
-before it becomes ownership proof. A changed or unreadable identity on the
-candidate chain is inconclusive; bare-PID ancestry never authorizes a URL.
-Windows Browser ownership reads the in-process owner-PID listener tables and
-never invokes `netstat`. A positive root or identity-stable descendant result
-proves the child. A failed target-table read remains inconclusive after the
-control self-test, even when that control succeeds. A completed target negative
-can become foreign only after the control listener proves the table functional
-and every identity-stable root and descendant check completes negative.
-Other POSIX hosts run `lsof` scoped with `-p <pid>`. Exit 1 means a completed
-no-match only when stdout and stderr are both empty; any diagnostic makes
-ownership inconclusive. The control-listener self-test runs before a spawn when
-`ensure_running` must choose between the ordinary fixed-child-port path and the
-structurally blind `--port 0` path. During reuse it runs only after an
-inconclusive target lookup. Its result is cached for the gateway process by the
-resolved `lsof` path or the Windows API identity. A tool-path change or
-replacement Browser child invalidates the cache. If the self-test proved `lsof`
-globally blind, its PID-scoped empty result is inconclusive too. Windows reads
-IPv4 and IPv6 owner-PID listener tables in-process with
-`GetExtendedTcpTable`. The control self-test proves capability only when the
-owner-PID table attributes the listener it just bound to the gateway's own PID;
-a completed table without that PID is blind, and a failed table read is
-inconclusive. A completed target-table read makes per-process ownership checks
-definitive without `netstat`. A completed identity-attributed check for every
-PID that finds no owner is a definitive mismatch even if another process answers
-the health probe.
-
-Only a structurally blind host falls back to trusted child stdout during
-startup. A transient incomplete probe on a structurally capable host remains
-inconclusive even if a fresh startup line is available. The parser extracts the
-scheme, host, and port from a listener line, so harmless banner prefixes,
-separators, and URL paths may change without disabling the panel. It still
-requires HTTP, `127.0.0.1`, and either the assigned port or, for a port-0
-request, a valid child-selected port. The child proof retains both values: the
-requested port passed to `show` and the banner-reported bound port. A requested
-zero matches the resolved port only when it equals that recorded banner value.
-Playwright writes the line only after its server binds, and a process racing for
-a supervisor-selected TCP port cannot
-write to the child's pipe. A reader that consumes stdout without finding a
-recognized listener URL fails closed and logs the installed `playwright-cli`
-version beside the verified banner form. On a structurally blind host,
-`status()` names the same runtime contract in operator terms: the Browser CLI
-version did not print `Listening on http://127.0.0.1:<port>`, and an upgrade may
-have changed it. Because the installer tracks `@latest`, the daily
-`playwright-cli-banner.yml` workflow installs that same spec, launches
-`show --port 0 --host 127.0.0.1` once, and feeds its stdout to this parser
-(`scripts/check_playwright_cli_banner.py`); a drift fails the run with the CLI
-version and every line read, and `scheduled-failure-watch.yml` files it as an
-issue before users meet the fail-closed view. A present attribution path that fails names the tool, its
-resolved path when applicable, and the failed control-listener check; the reason
-tells the operator
-to inspect permissions or the process namespace. Ownership and relay failures
-otherwise describe the failed Browser-view task; PID, port, and thread details
-remain in debug or warning logs. Line count, byte count, and time bound only the
-proof window. A recognized report remains valid when a later limit switches the
-reader to discard mode. Without a match, the limit invalidates the report. A
-descriptor-backed reader duplicates the child pipe before reading; proof and
-discard paths use that same owned duplicate, which the reader closes exactly
-once in its `finally`. Closing or reusing the stream owner's descriptor cannot
-redirect the proof source. The daemon keeps draining and discarding stdout until
-EOF so a chatty long-lived child cannot fill its pipe and block. Every daemon
-thread start passes one guarded helper. A failed proof
-reader or post-bind relay start closes the child pipes and reaps the spawned
-process; failed relay connection or pump starts close their tracked sockets.
-
-Reuse and status enforce one final capability contract. Capable hosts re-prove
-current listener ownership on every reuse. A structurally blind host may publish
-only the startup result, in the same `ensure_running()` call that accepts the
-exact child's private post-bind report. No publication grant is retained. Every
-later status or reuse withholds the URL with
-`listener ownership cannot be re-proved on this host: <tool> is absent or cannot
-attribute processes`, preserves the live handle, and does not respawn per poll.
-A structurally blind owner lookup publishes only at startup and never adopts a
-reachable listener; an operator report that `the panel URL disappears after the
-first status call on host X` identifies this rule, not a regression. Root liveness, process identity, and HTTP health prove chain of
-custody and reachability but cannot prove which process currently owns the
-listener when PID attribution is unavailable. The spawn proof records the root
-PID, start token, and reader source. The source is `ATOMIC` for `/proc` or
-libproc, `WINDOWS` for query-only process creation time, and `LSTART` for
-`ps -o lstart=`. Every later root recheck uses that same source and never
-compares tokens across those encodings. The blind set is empty on supported
-platforms in ordinary operation: Linux uses `/proc`, Windows uses the in-process
-`GetExtendedTcpTable` owner-PID table, and macOS ships `lsof`. A completed
-ownership mismatch or failed health check still fails closed. An unreadable
-same-source identity is inconclusive: status withholds the URL while preserving
-the live handle. A dead handle is reaped once, and a fresh start must earn its
-own startup publication.
-
-The dashboard control socket cannot replace these checks with a nonce challenge
-because its reveal request carries only `sessionName` and its fixed PID response
-echoes no client-supplied field. The served dashboard
-provides the session grid with live screencast, a session detail view with tab bar
-and navigation controls, and full remote mouse and keyboard input, so a human can
-take over a session directly: this is the path for a CAPTCHA or a 2FA prompt that
-an agent cannot and should not complete. Escape releases input capture.
-
-Three properties of the server must be honoured, because each failure mode
-presents as a broken panel rather than as a misconfiguration:
-
-1. **Bind `--host 127.0.0.1` explicitly.** The default listener is IPv6-only, and
-   an iframe pointed at `127.0.0.1` gets a connection failure against it.
-2. **Health-check for any response, not for 200.** The root path answers 302.
-3. **Treat `show` as a supervised child process.** It blocks, so it needs an
-   owned lifecycle rather than a fire-and-forget call. `show --kill` stops the
-   daemon.
-
-**Never pass `--host 0.0.0.0`.** The served dashboard carries full remote input on
-a browser that may hold the operator's sessions, so binding it off loopback
-exposes an interactive takeover surface to the network.
+residual. The one exception is `dashboard.browser_local_origins`, an
+operator-written list of exact loopback origins (`localhost`, `127.0.0.1` or
+`[::1]` plus a required port, e.g. `localhost:5173`). The config coercer drops
+every other shape; the tool admits a `navigate` whose own `host:port` equals an
+entry byte for byte, after the same refusals and with userinfo refused outright;
+the gateway's own API port is refused even when listed. The list is read fresh
+per call and fails closed to empty. The agent cannot extend it: `config.json` is
+read-only inside the sandbox and `PUT /api/dashboard/config` does not accept the
+key. **Accepted residual:** once a listed page is open, `click`/`back` follow
+whatever that page links to, since only `navigate` is URL-gated.
+
+Passwords never pass the model: `type` refuses a password field, the frame masks
+one, and logins happen during takeover.
+
+### Screenshot directory
+
+`browser_snapshots.py` names the one directory the `screenshot` op writes to:
+`<data-home>/browser-snapshots` (`snapshot_dir()`), derived from `config_dir()`
+so an isolated `KIROCREW_HOME` stays isolated. It is never inside a working
+directory by construction, which is why `messaging/outbound_files.py` admits it
+as the second approved root for an inline image in a channel reply: a
+screenshot the agent just took can be sent, and admitting the directory grants
+nothing the `file_send` tool does not already deliver from it. The read is
+pinned to the directory's canonical spelling with the leaf kept literal, so a
+link planted at that name resolves the file elsewhere and fails the pin.
+
+### Settings → Browser
+
+First run is a three-step list (engine installed; connect your Chrome via
+`chrome://inspect/#remote-debugging` and Allow, or "Skip, use the fallback
+browser"; try it) until done or dismissed (`browser.first_run_dismissed`). Then
+the page is a status card: the browser in use, the connection state (yellow on
+`waiting_allow`), the fallback order, Test and Disconnect; an Engine section
+(Harness version, Kiro's Chromium version, Redownload); a locked Privacy row ("No
+usage data, no cloud browser"); the Live view section; the Local preview origins
+editor; and an Advanced picker for `browser.choice`. Data comes from
+`GET /api/browser/status` (polled every 2 s while a job runs or Chrome waits for
+Allow, else every 15 s; `supervisor.status()` plus `installing`, `install_job
+{status: running|succeeded|failed|interrupted, stage, error_detail}`,
+`chromium.downloaded` and `platform`) and `POST /api/browser/install|test|disconnect`,
+all owner-only and refusing the internal secret; writes go through
+`PATCH /api/config/kirocrew` one path at a time. Every control carries its
+`configKey`; every string is in the i18n catalog (`pages.settings.browserPanel.*`).
+
+The config section is `browser`: `choice`, `live.enabled`, `live.quality`,
+`live.max_fps`, `live.mask_passwords`, `first_run_dismissed`.
+`dashboard.browser_local_origins` stays where it is.
+
+#### Retired keys
+
+`dashboard.use_builtin_browser` and `dashboard.browser_view_port` configured the
+agent browser this stack replaced. They are no longer fields. A `config.json`
+that still carries them loads, logs ONE warning naming them
+(`config/resolution.py`, `warn_retired_section_keys`), and drops them on the
+next save (`_SECTION_KEYS_DELIBERATELY_DROPPED`). `PUT /api/dashboard/config`
+no longer accepts `use_builtin_browser`, and the change-card catalog no longer
+offers `browser.use-the-built-in-browser`.
+
+### The Preview tab
+
+The side panel's Browser tab is the **Preview** tab: the person's own local dev
+server, for front-end work that wants page annotation. It keeps the native
+embedded Chromium view (`website/electron/browser-view.js`), the element
+annotation overlay (`website/electron/browser-annotate.js`, splicing the shared
+page helpers in `website/electron/browser-page-helpers.js`) and
+`WebPreviewPanel`. It opens only the origins in
+`dashboard.browser_local_origins`; an outside URL answers "Open this in your
+Chrome, or ask Kiro". The agent does not drive it: the Electron main process
+exposes `open`, `navigate`, `setBounds`, `setOverlayActive`, `setInactive`,
+`close`, `getState` and `annotate` on the `browserAPI` preload bridge and
+nothing else (`website/electron/preload.js`, `website/electron/ipc-registrar.js`,
+`website/electron/runtime/window/browser-panels.js`).
+
+The view renders arbitrary untrusted web content, so it is the most locked-down
+`WebContentsView` in the app: a persistent partition isolated from the
+dashboard's cookie jar, `contextIsolation`, no `nodeIntegration`, `sandbox`,
+no `webviewTag`, and the shared right-click menu only.
 
 #### Native view focus
 
-In the desktop app keyboard focus belongs to exactly one child view of the window, and
-hiding the focused view does not move it. So when the native browser view leaves the
-screen while it holds focus (an overlay, an inactive tab, a collapsed panel, close), the
-manager in `website/electron/browser-view.js` hands focus back to the dashboard view
-(`focusHost`), and on window focus `reclaimFocus` does the same for a hidden view that
-still holds it. Without this every dashboard text input would look alive and receive no
-keystrokes.
+In the desktop app keyboard focus belongs to exactly one child view of the
+window, and hiding the focused view does not move it. So when the native view
+leaves the screen while it holds focus (an overlay, an inactive tab, a collapsed
+panel, close), the manager in `website/electron/browser-view.js` hands focus
+back to the dashboard view (`focusHost`), and on window focus `reclaimFocus`
+does the same for a hidden view that still holds it. Without this every
+dashboard text input would look alive and receive no keystrokes.
 
-#### Address bar launcher
+### Doctor
 
-The Browser panel has two transports. In the desktop app a native Chromium view
-owns the panel and an external site typed into the address bar lands there.
-Everywhere else — a plain browser tab, including a laptop reaching a remote
-gateway over an SSH tunnel — the dashboard CSP admits only loopback into the
-preview iframe (`frame-src`/`connect-src` in `server.py`), so `google.com` could
-neither be framed nor probed, and the panel would report a healthy public site as a
-dev server that "stopped responding". The CLI's own dashboard cannot open a session for a
-human (its bundle renders "No open sessions." and offers navigation only inside one
-that exists), and every other `playwright-cli` invocation is an agent's shell turn.
-
-`browser_cli/launcher.py` plus `POST /api/browser/open` (`{url, session_key}`)
-is that launcher, and the panel calls it on the non-native transport when the
-normalized host is not loopback. The handler ensures the `show` view is serving
-(the same start path as `/api/browser/view/start`, honouring
-`dashboard.browser_view_port`), then runs the CLI as a supervised child through
-`install.cli_path`/`cli_command`/`cli_env`. `cli_path` accepts only the sealed
-managed leaf or a fixed, non-writable system candidate; it never falls back to
-PATH. `cli_command` treats that launcher as identity only and invokes a sealed or
-fixed non-writable Node plus the attributed package's `playwright-cli.js`. Thus a
-POSIX `#!/usr/bin/env node` shebang cannot select an agent-writable
-version-manager binary, and a Windows `.cmd` launcher never receives owner URL
-bytes for `cmd.exe` to reparse. The same prefix starts the supervised `show`
-process and performs install/version probes. If either executable in the pair is
-absent or refused, no subprocess starts. The unavailable reason both surfaces
-report -- the browser-view status the panel renders and the `open` launch result
--- is drawn from one pair of constants so they always read identically: when a
-launcher the user installed themselves outside the managed prefix is present but
-declined -- a `~/.local/bin` or version-manager binary on `PATH`, or a machine
-install such as Homebrew `/opt/homebrew/bin` or npm-global `/usr/local/bin`
-refused as writable by the gateway user -- the reason explains that a one-time
-managed reinstall is needed, because telling that user "not installed" when they
-do have an install is misleading; when nothing is present at all, or the only
-refused candidate is a planted shim in an agent-writable tree or a boundary that
-cannot be verified (which a reinstall would not address), the plain
-"playwright-cli is not installed" hint stands. The user-installed-launcher case
-is identified by `legacy_launcher_refused`, which reuses the same identity-only
-resolution scan and so never runs the launcher. The one-click install keeps that
-fence and checks it first: when the workspace root or `KIROCREW_PROJECT_DIR` is
-the data home or one of its parents, every launcher it could write would land in
-the agent-writable tree, so unless a vetted fixed-system launcher already
-resolves (which `cli_path()` would fall back to) it refuses at a
-`check-install-boundary` step, before npm runs, naming that root and the remedy
-(move it outside the data home and restart the gateway). When the install's own
-`resolve-binary` step finds the managed entrypoint on disk but refused, its error
-names the entrypoint and the refusal reason instead of "not found". `cli_env`
-still carries `PLAYWRIGHT_MCP_CONFIG`, the snapshot directory and the attach token
-exactly as it does for an agent's invocation:
-
-| Browser state (from `playwright-cli --json list`) | Command |
-|---|---|
-| the session is listed `open` | `playwright-cli -s=<session> goto <url>` |
-| listed `closed`, or not listed | `playwright-cli -s=<session> open <url>` |
-| the list cannot be read | `goto`, whose failure is reported in the CLI's own words |
-
-`open` runs only on a positive "not open" from the CLI's structured output: a
-bare `open` on a live session tears that browser down and starts another,
-losing its tabs, so neither an unreadable list nor a failed `goto` may escalate
-to one. The `--json` flag is part of the CLI's command surface; an error
-sentence is not, which is why the decision reads the former. The answer is
-`{ok, session, error, attached, view}` (the URL is the caller's own input and is not echoed); `attached`
-says whether the reveal below took, so the panel names the session to pick only
-when it did not; `error` is the CLI's
-own text — ANSI stripped, the update banner, the 2 KB Chromium argv dump and
-Node's stack preamble removed, credentials redacted, capped — so the panel
-shows `No usable sandbox!` or `Chromium distribution 'chrome' is not found …`
-verbatim instead of a blank frame. For the sandbox case the remedy from
-[Launch config](#launch-config) is appended (the markers are Chromium's own
-sandbox-failure lines, one phrasing per platform -- `No usable sandbox` on Linux,
-`sandbox initialization failed` and `Failed to initialize sandbox.` on macOS,
-matched case-sensitively without the errno tail -- and a miss costs only the
-appended advice): the
-operator names their own `PLAYWRIGHT_MCP_CONFIG`; the launcher never drops the
-sandbox and never writes a config of its own. `view` is the post-attempt
-`show` status, so the panel frames the view without a second read.
-
-**Consent.** A human pressing Enter in an authenticated dashboard is the
-approval. The route is owner-only like the view routes, is on no internal-path
-list, and the handler additionally refuses a caller that authenticated with the
-internal secret — an agent reaching it would bypass the shell approval ladder the
-[capability model](#capability-model) routes browsing through. The URL is
-re-validated server-side (`http`/`https`, a host, and no secret-bearing
-component — userinfo, query, or fragment: argv is world-readable through
-`/proc/<pid>/cmdline` for the life of the CLI process, so a `?token=` or
-`#access_token=` URL would leak; this is an argv limitation, to be lifted only
-if the URL can travel to the CLI outside argv) before it
-becomes the ONE free element of a fixed argv, which is what keeps the spawn
-benign for `test_spawn_audit`.
-
-**One session per chat slot, named `panel-<owner6>-<slot8>`** (sha256 digests of
-the owning gateway's data home and of the slot key — identifiers rather than
-secrets; the owner tag is the ownership contract described under [Stranded
-daemon reclamation](#stranded-daemon-reclamation)). The
-name deliberately does not match the generated `kc-<8hex>` shape: the orphan
-sweep reclaims a `kc-` daemon as soon as no live process carries its
-`PLAYWRIGHT_CLI_SESSION`, and the only process that ever carries the panel's is
-the CLI invocation that exits milliseconds later — full participation would kill
-the human's browser ten minutes in. So the session is operator-class to the sweep
-(structurally excluded, never signalled) and its lifetime is owned here: the
-launcher records every session it opened — including an `open` that outlived
-its budget, whose detached daemon may be up regardless — and `_register_browser_view_cleanup`
-closes exactly those (`-s=<name> close`, never `close-all`/`kill-all`) before it
-stops the view, so a gateway restart is idempotent and an operator's own browser
-survives it. A gateway that dies without shutting down strands the daemon exactly
-as an operator's own `open` would, and the deterministic name lets the next
-gateway re-adopt it with `goto` instead of leaking a second one. `-s=` selects
-the session and the child's `PLAYWRIGHT_CLI_SESSION` is set to the same name, so
-the daemon's exec-time environ and argv agree.
-
-**One socket root — and one daemon registry — for the gateway's own CLI
-children.** The `show` child and every launcher invocation run with
-`PWTEST_SOCKETS_DIR` set to `<data-home>/pw/ui/s` and `PWTEST_DAEMON_SESSION_DIR`
-to `<data-home>/pw/ui/d` (`launch.ui_socket_env`; an operator-configured root is
-honoured as a base and namespaced under it, one of our own arriving by
-inheritance is regenerated — the doctrine of the generated sessions' roots, with
-the `ui` leaf deliberately not 8-hex so nothing can read it as a session's
-namespace). The registry is pinned for the same reason as the root: a gateway
-started from inside an agent's shell would otherwise inherit that agent's
-registry, the panel's sessions would register there, and after a crash and an
-ordinary restart the sweep would list the default registry and never find the
-logged-in browser; deterministic and gateway-owned, the `list` that
-`reclaim_stranded` and `close_all` run reads the same registry across every
-gateway life. This is the same hook the generated sessions use, gated on the same
-installed-source probe, and it exists so the gateway KNOWS where its two children
-meet rather than re-deriving the CLI's default path (temp directory plus a hash
-of the user name). It is left unset — the children fall back to the CLI's
-default and the reveal below is skipped — when the hook cannot be CONFIRMED on
-the CLI that would run, when the path would overflow the AF_UNIX budget (a pod's
-long home), or when the directory cannot be prepared owner-only.
-
-**Reveal.** The `show` dashboard lists a new session in its sidebar but does not
-attach its viewport to it, so after a successful launch the gateway asks it to:
-one JSON line (`{"sessionName": …}`) on the dashboard app's singleton socket,
-`<socket root>/dashboard/app.sock`. That layout is upstream's, so it is pinned
-the way the socket-root hook is — `install.cli_dashboard_socket_support` reads
-the serving `playwright-core` bundle for `makeSocketPath("dashboard", "app")`
-and a rename turns the reveal into a skip reported once at WARNING in the
-gateway log (not a debug line), so the loss of the auto-attach is visible. The CLI's own way to reveal,
-`show -s=<name>` with no `--port`, is deliberately not used: when the singleton
-socket is stale it becomes the winner and launches a Chromium app window on the
-gateway host. Connecting ourselves fails closed — no listener, no reveal, nothing
-else — and Windows (a named pipe) skips it.
-
-*Attribution is not capability.* Both seam gates
-(`install.cli_lifecycle_env_support`, `install.cli_dashboard_socket_support`)
-answer a `SeamSupport` verdict plus a detail line, and the three values are not
-degrees of the same thing. `UNSUPPORTED` means the serving bundle was READ and a
-needle is gone — a real upstream capability gap, and the only verdict allowed to
-describe the installed CLI. `UNVERIFIED` means no bundle was read at all: no
-`@playwright/cli` package directory is attributable to the resolved launcher, no
-`playwright-core` tree serves the package, or the bundle was never read — absent,
-empty, past the source-size ceiling, or an I/O failure. Both still fail closed, so
-an `UNVERIFIED` host keeps the CLI's own lifecycle environment untouched exactly
-as before; what changes is what the log says.
-
-Both gates anchor on the resolved launcher ALONE, through
-`_cli_package_for_launcher`, and deliberately NOT on `_cli_package_dirs`. That
-list falls back to the standalone install prefix, which is right for a revision
-lookup — a fallback revision beats no revision — and wrong for a seam verdict,
-which is a claim about the CLI that will actually run. A package belonging to a
-different install answering for a launcher whose own package could not be found
-is the same misreport in a narrower case. The
-`UNVERIFIED` line names the launcher it could not attribute and the remedy
-(`install.ATTRIBUTION_REMEDY` — install the CLI where `cli_path` resolves it),
-because a capability claim there points the operator at a CLI upgrade that cannot
-apply: the seams were present in every measured version, and what
-varied was only whether the launcher's ancestry reached the package. `PATH` is not
-a launcher source, so re-admitting a version-manager shim is deliberately NOT the
-remedy. Each line is emitted once per distinct reason rather than once per session
-start, keyed on the message in `launch._warned_lifecycle_losses` and
-`launcher._warned_layout_losses`; a reason that CHANGED is a different host state
-and speaks again, so a host moving between `UNVERIFIED` and `UNSUPPORTED` is not
-held at its first reading.
-
-*Probe note.* The reveal rests on two byte-level needles in the serving
-`playwright-core` package's core bundle (the `coreBundle` file under its `lib`
-directory, beside the package's `browsers.json`), measured by
-`install.cli_dashboard_socket_support` before every reveal attempt:
-`makeSocketPath("dashboard", "app")` (the dashboard's singleton socket) and
-`process.env.PWTEST_SOCKETS_DIR ||` (the socket-root hook the launcher and the
-`show` child share). The answer is cached by the bundle's path, mtime and size,
-so an upstream `@playwright/cli` bump re-runs the measurement on its own; a
-bundle missing either needle skips the reveal and logs the once-per-process
-WARNING above. As last measured (2026-09), both needles are present in
-`@playwright/cli@0.1.18` and in `playwright-core@1.63.0-alpha-2026-08-31` (the dependency
-of `@playwright/cli@0.1.19`); that is the re-measure baseline.
-When an upgrade turns the WARNING on, re-measure the needles against the new
-bundle and either update them or cut the reveal unit (`_reveal`,
-`_dashboard_socket_path`, `install.cli_dashboard_socket_support`, their tests
-and this paragraph) — the page still opens and frames without it; only the
-auto-attach is lost.
-
-**Panel behaviour.** `normalizeUrl` upgrades a bare public host to `https://`
-(`google.com`) and keeps `http://` for the dev-server shapes — a loopback host,
-an IP literal, or any explicit port; this default is shared by both transports,
-so the native view opens a bare public host on `https://` too. For a loopback
-host the preview iframe path is unchanged; on the native transport an external
-host still goes to the native view. While the gateway is launching, the panel
-shows an opening state; on success the CLI view takes the panel, and the framed
-dashboard's own URL bar, tab bar and remote input carry navigation from there —
-the panel adds no second address bar beside a surface that already has one. The
-view header names the session THIS CHAT LAUNCHED into, by its `panel-…` name,
-and states that as a launch fact ("Opened from this chat") rather than as
-ownership of what the frame is showing (#5940). The distinction is load-bearing
-because the reveal above is one machine-wide switch: an agent or the CLI opening
-a page for another chat's session, or a second dashboard tab, moves the single
-viewport with no signal this panel can observe. A header reading "this chat's
-browser" therefore described, routinely, a page the reader was not looking at.
-Naming the session the frame is ACTUALLY on would need the view status to carry
-it — `/api/browser/view` answers `status`, `url`, `port` and `reason`, and the
-frame is cross-origin, so the panel has no other source — and that field does not
-exist yet; the open half of #5940 owns it. A window event between mounted panels
-is NOT a substitute: the dashboard mounts one panel per browsing context (every
-`SidePanel` is passed the single active slot), so it would reach no listener, and
-none of the supersedings above is a mounted panel. One sentence
-under the header says how the next site is opened (the padlock above the page
-unlocks the frame's own address bar; the monitor button brings the preview bar
-back) and is dismissed once per browser; and when the answer says the reveal did
-not attach (`attached: false`), one line names the session to pick in the frame's
-sidebar — said only in that case. On
-failure the panel hands back to the preview body and renders the gateway's text
-through `ErrorNotice` (dismiss on the notice, one retry action). A URL with a
-`?` query or `#` fragment never makes the round trip: the panel refuses the same
-shape the gateway refuses (`hasQueryOrFragment`) and shows a plain hint — not an
-error, nothing failed — saying where such a link goes: open the site's plain
-address, then type the full link into the frame's own address bar behind its
-padlock; no retry. The gateway's own `invalid_url` answer, from a caller that
-skipped that check, is a rejected request and renders the same sentence through
-`ErrorNotice`. Only the newest
-launch on a slot may paint: every launch takes a sequence number, a slot change
-bumps it, and a late answer from an older launch (a mistyped address that fails
-after the corrected one succeeded, or a slot the user left) paints nothing. The
-panel frames the view through the **same-origin relay** whenever the gateway
-publishes one: `/api/browser/view` answers a root-relative `path`
-(`/browser-view/<token>/`), the panel prefers it over the direct `url`, and the
-frame is served through the dashboard's own port — so a remote or tunneled
-dashboard reaches the view through the one forward it already has, with no
-extra configuration. The direct loopback `url` remains as the fallback for an
-old gateway whose payload carries no `path`: that URL is loopback on the
-GATEWAY host, dead from a browser on another machine unless
-`dashboard.browser_view_port` is pinned and that port forwarded — the panel
-probes it with the same no-cors liveness check it uses for a dev server and, on
-two strikes, replaces the frame with an `ErrorNotice` naming the URL and the
-setting rather than showing the browser's own connection-refused page. (The
-relay path never gets that probe: it is same-origin, so its health is the
-dashboard's own.) The relay rewrites the view SPA's root-absolute references
-and its `?ws=` socket parameter to stay under the tokened prefix; those
-rewrites are pinned to the current playwright-cli bundle shape (double-quoted
-`src`/`href` attributes, `url(/…)` in CSS, the `'/' + ws` socket-URL
-construction), so **after a playwright-cli upgrade, open the Browser panel once
-on a remote dashboard and confirm the view boots through the relay** — an
-upstream bundle-shape change would silently restore the direct-URL breakage
-this path exists to fix.
+`kirocrew doctor` prints one informational row (`_doctor_browser_leftover` in
+`doctor_checks/install.py`) when the prefix an earlier version's browser CLI
+installer wrote (`_LEFTOVER_BROWSER_CLI_LEAF` under the data home) is still on
+disk: it names the directory and says it can be deleted. Doctor never deletes or
+modifies it, and the row is silent when the directory is absent.
 
 ### Security
 
-| Control | Implementation |
-|---------|----------------|
-| Capability availability | Vetted absolute launcher identity only: `<data-home>/playwright-cli` first, then fixed system locations whose direct launcher, Node and package-entry hierarchies the gateway user cannot write. The managed prefix is on the sensitive-path floor and `_CREW_READONLY_LEAVES`, so agent file tools cannot read or replace it and every agent sandbox can execute but not modify it. Linux precreation requires the launcher leaf itself to be a real directory before and after the create race; a resolving symlink is refused because a bind mount would follow its target and leave the name replaceable. PATH, `~/.local/bin`, project and workspace candidates are ignored. On every OS gateway-owned calls use an attributed direct pair: managed `gateway-node`/`node.exe` plus contained `playwright-cli.js`, or a fixed-system Node and package entry whose complete hierarchies are non-writable. POSIX shebangs, PATH Node, and Windows batch files never receive gateway request data. See [Capability model](#capability-model) for why availability is not approval |
-| Dashboard exposure | `show` is bound to `127.0.0.1`; `0.0.0.0` is never passed, because the served view carries remote input |
-| Browser view relay (`/browser-view/…`) | The one token-auth bypass that proxies foreign content. Auth is a per-instance capability token in the path: minted fresh at every view-server start, disclosed only through the cookie-authed owner-gated `/api/browser/view` payload, constant-time-compared against a lock-free snapshot BEFORE the supervisor lock or its OS-level ownership probes are touched — an invalid candidate can never contend either, and the probes themselves run outside the lock on a consistent snapshot. Every unauthenticated miss answers a uniform 404; a caller already holding the current token that lands in a start window (supervisor lock held past the bounded wait) gets a retryable 503 instead — safe to distinguish precisely because only token holders can reach it. Every allow/deny is SEL-audited. Ownership is re-proved after each upstream connection is established, before any byte or frame goes downstream, closing the proof→connect race (a dead child's freed port cannot be inherited by a squatter; a restarted view's new port marks held connections stale). Every relayed non-script response is stamped with the CSP `sandbox` + `nosniff` (+ `Access-Control-Allow-Origin: *` — the token gates access, CORS only gates readability), and the panel frames it in an opaque-origin sandbox, so relayed content never runs with the dashboard origin's ambient authority |
-| Address bar launcher (`POST /api/browser/open`) | Owner-only (cookie/token), on no internal-path list, and the handler refuses an internal-secret caller outright, so an agent cannot use it to skip the shell approval ladder. The URL is re-validated (`http`/`https`, host, and no secret-bearing userinfo, query, or fragment — argv is world-readable) before it is the one free argv element; the session name is derived hex; no sandbox flag is ever added and no config written — the operator's `PLAYWRIGHT_MCP_CONFIG` is inherited as-is. Only sessions this gateway opened are closed at shutdown, never `close-all`/`kill-all`. **Accepted residual:** a token carried in the URL *path* still reaches argv for the life of the CLI process; paths stay allowed because refusing them refuses most ordinary pages. The residual closes when the CLI takes the URL outside argv — #9854 tracks that switch and its version floor |
-| Native `browser` MCP tool | The tool is always advertised but re-checks the vetted CLI availability and `capabilities.browse` governance at call time. It dispatches one enum-bounded operation to the calling slot's Electron panel through internal-secret-only routes. `dashboard.use_builtin_browser=false`, an unresolved session, a missing panel, HTTP 404/503, or a transport miss returns CLI fallback guidance; governance denial never falls back. `navigate` accepts only public HTTP(S) targets plus operator-listed `dashboard.browser_local_origins`, as described above. Arguments are scalar or lists of scalars, result text is credential/exfiltration-URL redacted and capped, and screenshot data is not inlined into the model response. **Accepted residual:** the lenient session resolver can map a subagent process to its parent slot, so a subagent tool call may drive the parent's native panel; this stays same-user/same-machine and public-navigation-only |
-| Agent reach into a `panel-` session | **Accepted residual.** A `panel-` browser can hold logins the human typed into it, and an agent drives the same CLI through its shell. What separates the populations is structural but not an enforcement boundary: an agent process runs under its own generated `PWTEST_DAEMON_SESSION_DIR`/`PWTEST_SOCKETS_DIR` namespace (see [Generated session reachability](#generated-session-reachability)), so a bare `playwright-cli -s=panel-… goto` from an agent shell resolves no session and its `list` does not show one; reaching the human's browser takes a command that also names the CLI's default registry and the gateway's socket root, both readable by a same-user process. The control on that command is the ordinary shell approval ladder, exactly as for every other `playwright-cli` invocation; the reserved prefix and the `web-browse` skill's rule are the conventions on top. An enforced isolation would be a per-population credential on the daemon socket, which the CLI does not offer |
-| Reveal | One JSON line to the `show` dashboard's own singleton socket under the gateway-owned socket root both children run with, only when the installed bundle carries that layout, after a successful launch; fails closed when there is no listener. `show -s=<name>` (no port) is never run, since with a stale socket it launches a Chromium app window on the host |
-| Saved state files | Owner-only permissions; they hold live session credentials |
-| Launch config | Write-protected from the agent on both the file-edit and shell gates, and readable. Deliberately anchored rather than bare-token: the filename is not itself the grant, since the agent can name its own `PLAYWRIGHT_MCP_CONFIG` — so what the entry removes is the durable form (rewriting the config the product installed), and a `cd`-relative write is the accepted residual, exactly as for `.data-home-ready` |
-| Page content | Treated as untrusted input. A URL, instruction, or form target read off a page never decides the next navigation |
-| Attach mode | Operates the operator's real logged-in browser, so it is the strongest form of the capability and remains behind shell approval |
-| Approval | Every `playwright-cli` shell command follows the ordinary approval ladder. Presence alone never auto-approves it; only an explicit trusted pattern, session trust, or auto-approve grant can skip the prompt |
-
-### Platform notes
-
-| Requirement | Detail |
+| Risk | Control |
 |---|---|
-| Node.js | 20 or newer |
-| Install | `npm install -g --prefix <data-home>/playwright-cli @playwright/cli@latest` |
-| Browser binary | `install-browser <engine>`, user-local; `--with-deps` on an apt host only |
-| Attach | Chromium-family only, since Playwright ships an attach extension for that family alone |
+| The relay can reach the user's whole Chrome | the agent gets only the listed ops, on tabs it created; the relay never attaches the user's tabs. **Accepted residual:** CDP is browser-wide, so a bug in the tab filter would let the agent act on a tab the user opened; tests pin the filter and the card always shows which tab is live |
+| Harness sends data out | five environment fences, a pinned version, a test on the fence; no CLI, MCP server or update check runs |
+| Agent claims input | `/api/browser/input/*` and `/api/browser/live/*` refuse the internal secret |
+| Agent types a password | `type` refuses password fields; the frame masks them |
+| Frames show logged-in pages | owner websockets only; never written to disk except as a requested `screenshot` |
+| Another local process uses the relay | loopback, ephemeral port, URL given only to the daemon |
+| Agent reads Kiro's profile cookies or the daemon's IPC credential | `HIDDEN` leaves in every sandbox mode |
+| Local addresses | `navigate` keeps the public-only gate plus `dashboard.browser_local_origins` |
+| Governance | `capabilities.browse` is checked on every call and a denial never falls back |
+| Page content | treated as untrusted input; a URL, instruction or form target read off a page never decides the next navigation |
+| Preview tab | native view, deny-all partition, no agent channel, local origins only |
 
-### OS dependencies
+### What this stack replaced
 
-Playwright's `--with-deps` implementation is **apt-only**: on a distribution it
-does not recognize it selects its nearest Ubuntu package set and runs `apt-get` as
-root anyway, and because the flag and the download are one CLI invocation, a
-refusal takes the download down with it. So the flag is passed only on an apt host
-(`os_deps.with_deps_supported`), and a failed attempt there is retried without it,
-because the download itself needs no privilege. Every other host downloads with
-`install-browser <engine>` alone. Either way a missing library is reported as a
-missing library, with a command the operator runs deliberately where one exists
-(the table below names the one engine-and-distribution pair where none does); the
-remedy rides on the attempt without the flag, since that is the one a human acts on.
-
-`browser_cli/os_deps.py` resolves the host family from `/etc/os-release`
-(`ID` plus `ID_LIKE`, so derivatives resolve through their base) and composes the
-remedy for the engine that failed:
-
-| Family | `--with-deps` | Remedy appended to a failing download |
-|---|---|---|
-| debian / ubuntu | passed, retried without on failure | `npx playwright install-deps <engine>`, with `sudo` when the host has it |
-| rpm (rhel, fedora, centos, amzn, rocky, alma, suse), Chromium | never passed | an install line for whichever supported manager the host actually has — `dnf`, else `yum`, else `microdnf`, probed not assumed — naming the rpm packages. A SUSE host gets no remedy by lineage, even if `dnf`/`yum` is installed there: `zypper`-world package names differ, so a completed line would fail on its package list |
-| rpm, Firefox / WebKit | never passed | a line naming the engine and pointing at the libraries Playwright printed; no package list is offered, because the verified one covers Chromium alone. Fedora, for one, packages the libraries WebKit's build asks for, so the instruction can be followed there |
-| Amazon Linux (`ID=amzn`), WebKit | never passed | a line saying WebKit is not supported on this operating system and that Chromium is the supported engine on this host. One measured pair, one comparison: `os_deps.engine_unsupported_here` is true for WebKit when the os-release `ID` is `amzn`, never by `ID_LIKE` or family (a measurement is of one distribution's repositories). No package list and no retry: measured on Amazon Linux 2023, WebKit's build names 27 missing libraries, most with no package in the distribution's repositories, so no command the operator could run makes it launch. The verdict rides only on a step whose output names the missing libraries (`install._step` reads the predicate as `hint_requires_signal`); a WebKit download there that fails for another reason, a 503 or a full disk, keeps its own error and gets no hint |
-| unrecognized Linux | never passed | none — a guessed package manager fails on its own first argument and reads as the product being broken |
-| macOS / Windows | not applicable | none — the browser download alone is sufficient |
-
-The rpm manager probe, `os_deps.rpm_package_manager`, is public because the PPTX
-Maker's LibreOffice hint asks it too ([pptx-maker](pptx-maker.md)), so the two name
-the same manager for a host.
-
-The remedy is a command for a human to run, appended to the failing step's
-detail (which the settings panel renders verbatim) rather than a new UI state.
-Nothing in the remedy path elevates or runs a package manager; the only elevation
-is Playwright's own `--with-deps` attempt on an apt host.
-
-**A zero exit is not a verdict.** MEASURED on Amazon Linux 2023: with libraries
-missing, `install-browser` prints
-
-```
-Playwright Host validation warning:
-║ Host system is missing dependencies to run browsers. ║
-```
-
-and **exits 0**, leaving the browser directories in the cache. Playwright
-classifies it as a warning. Reading the exit code alone therefore reports a
-browser that cannot launch as installed — the panel goes green, `browser_ok`
-turns true because the build is genuinely on disk, and the real error arrives at
-the user's first browse as an opaque stack trace. Every browser step is judged on
-its output as well as its exit code (`os_deps.host_deps_unsatisfied`, matched
-against the header and the message body so a reworded box still trips one), and a
-match fails the step and carries the remedy. On Amazon Linux a WebKit match
-carries the verdict that the engine is not supported on this operating system
-instead, since the remedy there would ask for libraries no repository provides;
-and where a remedy rides on any ordinary failure, the verdict rides on that match
-alone, because the missing-library report is its only evidence.
-
-`browser_ok` keeps meaning "a build is downloaded", which stays literally true on
-such a host; the install error is what carries the truth that it cannot run.
-Making `browser_ok` mean "and it can launch" would need a validation probe on
-every settings poll.
-
-### Standalone enterprise installer
-
-`playwright-cli.sh` (macOS/Linux) and `playwright-cli.ps1` (Windows) install the
-same `@playwright/cli` package as the install flow above, for the case that flow
-cannot handle: a machine where `npm install -g` does not work. They are run by a
-human at a shell, not by the gateway, and nothing in the product invokes them.
-
-They exist because step 2 of the install flow assumes two things an enterprise
-laptop often lacks — a Node toolchain of a recent enough major, and a default
-registry that answers without a login. When either is missing, a bare
-`npm install -g` fails with npm's own output, which does not distinguish "your
-token expired" from "the registry is firewalled" from "this mirror does not carry
-the package", and those three have mutually exclusive remedies. The scripts remove
-both assumptions without introducing a private artifact channel: there is no Kiro
-Crew-hosted Playwright build to keep in sync or to trust.
-
-**Node is bootstrapped, not required.** A Node already on PATH is reused when its
-major is at least the floor the install flow above requires, as is one recorded by
-`ensure-node.sh` in `<data home>/node-bin-dir` — these installers *read* that
-marker but never write it, so the sharing is one-directional: a Node they
-bootstrap stays private to them, and `ensure-node.sh` still downloads its own.
-That is deliberate, because `env.py` hands the marked interpreter to the gateway,
-whose floor is higher again.
-
-A reused Node is only reused if `npm` is actually beside it. On Debian and Ubuntu
-`nodejs` and `npm` are separate packages, so `apt install nodejs` alone leaves a
-perfectly good Node with no npm — and telling that user to install npm would hand
-back the one prerequisite these installers exist to remove. Such a Node is
-abandoned and a private one bootstrapped instead, because the release tarball
-bundles npm. Missing npm in a tree the installer itself unpacked is a different
-thing entirely — a truncated archive — and aborts rather than retrying.
-
-Otherwise the release build for the detected platform is downloaded and its
-SHA-256 checked against that release's `SHASUMS256.txt` **before it is
-executed**; a mismatch, or an artifact the manifest does not list at all, aborts
-the install. Selection is libc-aware because an official tarball is not portable:
-musl hosts (Alpine) get the unofficial-builds variant, and so do pre-2.28-glibc
-hosts (RHEL 7-era) **on x64 only**, which is the only architecture that variant
-is published for. The manifest is fetched over the same channel as the artifact
-and is not itself signed — identical to `ensure-node.sh`, so this is corruption
-detection plus transport trust, not an independent trust root like the signed
-manifest `cli.sh` verifies.
-
-**The install is unprivileged and self-contained**, which is where it diverges
-from the install flow above: `npm install --global` is run with
-`npm_config_prefix` pointed at `<data home>/playwright-cli`, so nothing is written
-outside the user's home and sudo is never involved. The generated entry point is a
-**wrapper script, not a symlink**, written to `<prefix>/managed-bin`: npm's own shim
-starts `#!/usr/bin/env node`, which would resolve against the caller's PATH. The
-installer asks the verified Node process for its native `process.execPath`,
-atomically copies that executable to `<prefix>/gateway-node`, and writes a wrapper
-that invokes this managed copy with
-`<prefix>/lib/node_modules/@playwright/cli/playwright-cli.js` directly. The
-managed bin directory leads the agent subprocess PATH and remains inside the same
-read-only sandbox leaf; no generated wrapper retains the source version-manager
-path. Every path interpolated into it is escaped because a generated script treats
-its inputs as code.
-
-**The public registry is pinned.** An ambient `.npmrc` that redirects the default
-registry at a private mirror makes a *public* package 401 the moment that mirror's
-token expires. `--registry` re-points it for the opposite case (public registry
-firewalled, mirror reachable), and `--isolated-npmrc` ignores the ambient config
-entirely. A registry URL carrying a credential — in userinfo or in a query
-parameter — is redacted everywhere the scripts print it, and the log is created
-owner-only, because npm writes that URL into its own output.
-
-**A credential may not be passed as a flag.** `/proc/<pid>/cmdline` is
-world-readable, so `--registry https://user:token@host/` publishes the token to
-every account on the machine for as long as the install runs, and leaves it in shell
-history besides — neither of which redaction can reach, since redaction covers only
-what the scripts print. The credential travels in the environment instead
-(`KIROCREW_NPM_REGISTRY`, `PLAYWRIGHT_DOWNLOAD_HOST`), where `/proc/<pid>/environ` is
-readable only by its owner, or through `npm login`. The refusal keys on PROVENANCE
-rather than content: the resolved registry value also holds an env-supplied
-credential, and refusing that would break the escape the error message recommends.
-
-**Enterprise failures are classified, not passed through.** npm's output is kept
-at `<prefix>/playwright-cli-install.log` — namespaced because a caller-supplied
-prefix could otherwise make that a generic name the installer truncates — and matched against the failures a corporate network
-actually produces. The browser binary is fetched during the install rather than
-left to first use, for the same reason: it comes from the Playwright CDN and not
-the npm registry, so a network that permits one may block the other, and doing it
-here turns that into exit 16 with a mirror remedy instead of a stall inside the
-user's first browse. `--with-deps` is deliberately not passed — it installs OS
-packages through the system package manager, and this installer never elevates.
-The full exit-code table is in `--help`; the codes that carry a diagnosis are 13
-(registry rejected auth), 14 (registry unreachable), 15 (package or version
-absent) and 16 (browser download blocked).
+The browser CLI shell path (Playwright's CLI, installed per host by `npm`), the
+gateway's `show` live-view supervisor and its `/browser-view` same-origin relay,
+the Browser panel's address-bar launcher (`POST /api/browser/open`), the
+native-panel command bus (`/api/browser/command`, `/api/browser/command-drain`,
+`/api/browser/command-result`) and the Electron control plane behind it, the
+per-agent browser-session environment and the stranded-daemon orphan class that
+reaped it, the `dashboard.use_builtin_browser` and `dashboard.browser_view_port`
+keys, the `browser_event` websocket event nothing emitted, and the daily
+banner workflow that checked the CLI's install script are gone. No migration and
+no flag: one change removed what it replaced. An installed CLI prefix is left on
+disk and reported by doctor; its sandbox leaves went with it (nothing the gateway
+executes lives there), while the retired CLI's session-material leaves stay
+masked because a leftover file still holds the owner's sessions.
 
 ### Related
 
@@ -1250,6 +465,10 @@ absent) and 16 (browser download blocked).
   opening a page so the user can see it.
 - [web-verify](../../../src/kiro_crew/builtin_skills/web-verify/SKILL.md) for
   screenshotting a front-end change as evidence.
+- [web-preview](../../../src/kiro_crew/builtin_skills/web-preview/SKILL.md) for
+  the Preview tab.
+- [computer-use](computer-use.md) for the screencast pattern the live view
+  follows (`computer_use_frame` to owner websockets).
+- [config](config.md) for how a retired key is dropped on save.
 - [mcp](../../architecture/mcp.md) for MCP registration, transport, and trust
-  boundaries. The `browser` tool is a thin native-panel command proxy; the
-  Playwright fallback remains a shell capability.
+  boundaries.

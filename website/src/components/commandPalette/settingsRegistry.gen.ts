@@ -33,21 +33,54 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "configKey": "auto_update"
   },
   {
-    "id": "browser.attach-token",
-    "labelKey": "pages.settings.browserPanel.token_label",
-    "tab": "browser",
-    "type": "input",
-    "occurrence": 1,
-    "label": "Extension token (optional)"
-  },
-  {
-    "id": "browser.use-the-built-in-browser",
-    "label": "Use the built-in browser",
-    "labelKey": "pages.settings.browserPanel.use_builtin_label",
+    "id": "browser.mask-password-fields-in-the-picture",
+    "label": "Mask password fields in the picture",
+    "labelKey": "pages.settings.browserPanel.mask_passwords_label",
+    "description": "Passwords are typed only by you, during a takeover. They never pass through Kiro and never appear in a frame.",
     "tab": "browser",
     "type": "toggle",
     "occurrence": 1,
-    "configKey": "dashboard.use_builtin_browser"
+    "configKey": "browser.live.mask_passwords"
+  },
+  {
+    "id": "browser.max-frame-rate",
+    "label": "Max frame rate",
+    "labelKey": "pages.settings.browserPanel.max_fps_label",
+    "description": "60 is the most this machine streams. Nothing is sent while the card is off screen.",
+    "tab": "browser",
+    "type": "select",
+    "occurrence": 1,
+    "configKey": "browser.live.max_fps"
+  },
+  {
+    "id": "browser.pick-a-browser-by-hand",
+    "label": "Pick a browser by hand",
+    "labelKey": "pages.settings.browserPanel.choice_label",
+    "description": "Automatic tries your Chrome, then Edge on Windows, then Kiro’s Chromium. A hand pick skips that order.",
+    "tab": "browser",
+    "type": "select",
+    "occurrence": 1,
+    "configKey": "browser.choice"
+  },
+  {
+    "id": "browser.quality",
+    "label": "Quality",
+    "labelKey": "pages.settings.browserPanel.quality_label",
+    "description": "Auto adapts frame rate and picture to your link: a slow link lowers the picture first, then the frame rate.",
+    "tab": "browser",
+    "type": "select",
+    "occurrence": 1,
+    "configKey": "browser.live.quality"
+  },
+  {
+    "id": "browser.show-the-live-view-in-chat",
+    "label": "Show the live view in chat",
+    "labelKey": "pages.settings.browserPanel.live_enabled_label",
+    "description": "When Kiro uses the browser, the turn shows a live card. Click the picture to take over.",
+    "tab": "browser",
+    "type": "toggle",
+    "occurrence": 1,
+    "configKey": "browser.live.enabled"
   },
   {
     "id": "channels.allowed-emails-webex",

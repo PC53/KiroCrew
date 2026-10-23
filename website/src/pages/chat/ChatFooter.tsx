@@ -9,6 +9,7 @@ import { resolveThemeLoaderIcons } from '../../themeLoaderIcons'
 import { useOptionalTheme } from '../../hooks/useTheme'
 import ErrorBoundary from '../../components/ErrorBoundary'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
+import { useBrowserLiveInControl } from '../../hooks/useBrowserLive'
 type StopState = 'idle' | 'soft_pending' | 'killing'
 
 /** One carousel beat — the cadence the .csb4 cross-fade was built around. */
@@ -260,8 +261,13 @@ export function useStreamIdle(tick: number, active: boolean, ms: number = STREAM
  *  (ChatEmbed) passes a window wider than its poll interval, because its tick
  *  only advances once per poll and a shorter window would flash the indicator
  *  between every two reads of a reply that is still arriving. */
-const ChatFooter = memo(function ChatFooter({ running, stopping, state, lastRole, regenerating, stopState, streamTick = 0, sendUnconfirmed = false, streamIdleMs = STREAM_IDLE_MS }: { running: boolean; stopping: boolean; state: string; lastRole: string; regenerating?: boolean; stopState?: StopState; streamTick?: number; sendUnconfirmed?: boolean; streamIdleMs?: number }) {
+const ChatFooter = memo(function ChatFooter({ running, stopping, state, lastRole, regenerating, stopState, streamTick = 0, sendUnconfirmed = false, streamIdleMs = STREAM_IDLE_MS, browserSessionKey = null }: { running: boolean; stopping: boolean; state: string; lastRole: string; regenerating?: boolean; stopState?: StopState; streamTick?: number; sendUnconfirmed?: boolean; streamIdleMs?: number;
+  /** The slot this footer stands under. While the person holds that session's
+   *  browser (BrowserLiveCard takeover) the line reads "Waiting for you to hand
+   *  the browser back" instead of "Thinking…", because the agent is not. */
+  browserSessionKey?: string | null }) {
   useLanguageGeneration() // memo() bails out of the provider-level repaint; subscribe directly
+  const browserInControl = useBrowserLiveInControl(browserSessionKey)
   const slug = useThemeSlug()
   const themeState = useOptionalTheme()
   const packSlug = packSlugOf(slug)
@@ -324,7 +330,7 @@ const ChatFooter = memo(function ChatFooter({ running, stopping, state, lastRole
           <div
             className="inline-flex items-center gap-2"
             role="status"
-            aria-label={i18nT('pages.chat.chatFooter.thinking')}
+            aria-label={browserInControl ? i18nT('pages.chat.browserLiveCard.waiting_for_hand_back') : i18nT('pages.chat.chatFooter.thinking')}
           >
             {/* A throwing theme loader must not reach the route-level boundary and
                 blank the chat; it renders nothing (the label alone then carries
@@ -351,7 +357,7 @@ const ChatFooter = memo(function ChatFooter({ running, stopping, state, lastRole
                   : <SwapCarousel icons={loader.icons} />}
             </ErrorBoundary>
             </span>}
-            <span aria-hidden="true" className="text-muted text-[13px] font-mono">{i18nT('pages.chat.chatFooter.thinking')}</span>
+            <span aria-hidden="true" className="text-muted text-[13px] font-mono">{browserInControl ? i18nT('pages.chat.browserLiveCard.waiting_for_hand_back') : i18nT('pages.chat.chatFooter.thinking')}</span>
           </div>
         )}
       </div>

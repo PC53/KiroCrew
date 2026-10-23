@@ -1,5 +1,6 @@
+import type React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { screen, fireEvent, act, within } from '@testing-library/react'
+import { screen, fireEvent, act, within, waitFor } from '@testing-library/react'
 
 import { renderWithProviders } from './helpers'
 import WebPreviewPanel from '../components/WebPreviewPanel'
@@ -21,16 +22,25 @@ import WebPreviewPanel from '../components/WebPreviewPanel'
  * not the previewed app's state.
  */
 
-const getBrowserView = vi.fn()
+const PORTS = [3000, 5173, 8080]
+const ORIGINS = PORTS.flatMap(p => [`localhost:${p}`, `127.0.0.1:${p}`])
+const kirocrewConfig = vi.fn()
 vi.mock('../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/client')>()
   return {
     ...actual,
-    api: { ...actual.api, getBrowserView: () => getBrowserView() },
+    api: { ...actual.api, kirocrewConfig: () => kirocrewConfig() },
   }
 })
 
-const STOPPED = { status: 'stopped', url: null, port: null, reason: null }
+/** Render the panel and let its origins read settle: the allowlist gate shows
+ *  neither a frame nor a refusal until the list has answered. */
+async function renderPanel(ui: React.ReactElement) {
+  const r = renderWithProviders(ui)
+  await waitFor(() => expect(screen.getByTestId('web-preview-panel').getAttribute('data-origins-loaded')).toBe('true'))
+  return r
+}
+
 const NOTICE = 'web-preview-frame-blocked'
 const HINT = 'web-preview-frame-hint'
 
@@ -52,7 +62,7 @@ function violate(
 
 beforeEach(() => {
   localStorage.clear()
-  getBrowserView.mockReset().mockResolvedValue(STOPPED)
+  kirocrewConfig.mockReset().mockResolvedValue({ dashboard: { browser_local_origins: ORIGINS } })
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(undefined))
 })
 afterEach(() => { vi.unstubAllGlobals() })
@@ -64,9 +74,9 @@ async function settle() {
 }
 
 describe('WebPreviewPanel - a refused in-frame navigation is explained', () => {
-  it('names the refusal, the refused origin and the way out above the frame', () => {
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+  it('names the refusal, the refused origin and the way out above the frame', async () => {
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     const frame = screen.getByTitle('Web preview')
 
     violate()
@@ -93,8 +103,8 @@ describe('WebPreviewPanel - a refused in-frame navigation is explained', () => {
   })
 
   it('goes away on dismiss and leaves the frame as it was', async () => {
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     const frame = screen.getByTitle('Web preview')
     violate()
     fireEvent.click(within(screen.getByTestId(NOTICE)).getByRole('button', { name: 'Dismiss' }))
@@ -104,11 +114,11 @@ describe('WebPreviewPanel - a refused in-frame navigation is explained', () => {
     await settle()
   })
 
-  it('survives switching side-panel tabs away and back', () => {
+  it('survives switching side-panel tabs away and back', async () => {
     // The panel stays mounted while its tab is inactive, and so does the
     // blank frame, so the notice explaining it must still be there on return.
-    const { rerender } = renderWithProviders(<WebPreviewPanel sessionKey="sess-1" active />)
-    fireEvent.click(screen.getByText(':3000'))
+    const { rerender } = await renderPanel(<WebPreviewPanel sessionKey="sess-1" active />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     violate()
     rerender(<WebPreviewPanel sessionKey="sess-1" active={false} />)
     rerender(<WebPreviewPanel sessionKey="sess-1" active />)
@@ -118,12 +128,12 @@ describe('WebPreviewPanel - a refused in-frame navigation is explained', () => {
   it('clears when the frame comes back after the server was unreachable', async () => {
     // The unreachable card unmounts the frame; a later good probe remounts it
     // on a fresh load, so the old refusal no longer describes it.
-    vi.useFakeTimers()
     const fetchMock = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('fetch', fetchMock)
     try {
-      renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-      fireEvent.click(screen.getByText(':3000'))
+      await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+      vi.useFakeTimers()
+      fireEvent.click(screen.getByText('localhost:3000'))
       violate()
       expect(screen.getByTestId(NOTICE)).toBeInTheDocument()
       fetchMock.mockRejectedValue(new Error('refused'))
@@ -138,18 +148,18 @@ describe('WebPreviewPanel - a refused in-frame navigation is explained', () => {
     }
   })
 
-  it('clears on Reload', () => {
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+  it('clears on Reload', async () => {
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     violate()
     fireEvent.click(screen.getByLabelText('Reload preview'))
     expect(screen.queryByTestId(NOTICE)).toBeNull()
     expect(screen.getByTitle('Web preview')).toBeInTheDocument()
   })
 
-  it('clears when the reader loads another address', () => {
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+  it('clears when the reader loads another address', async () => {
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     violate()
     const input = screen.getByLabelText('Preview URL')
     fireEvent.change(input, { target: { value: 'localhost:5173' } })
@@ -159,13 +169,12 @@ describe('WebPreviewPanel - a refused in-frame navigation is explained', () => {
   })
 
   it('shows the notice over a device-sized frame too', async () => {
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     fireEvent.pointerDown(
-      screen.getByRole('button', { name: 'More actions' }),
+      screen.getByRole('button', { name: 'Preview size' }),
       { pointerId: 1, button: 0, ctrlKey: false, isPrimary: true },
     )
-    fireEvent.click(screen.getByText('Preview size'))
     fireEvent.click(screen.getByText('iPhone SE'))
     violate({ target: screen.getByTitle('Web preview') })
     expect(screen.getByTestId(NOTICE)).toBeInTheDocument()
@@ -173,9 +182,9 @@ describe('WebPreviewPanel - a refused in-frame navigation is explained', () => {
     await settle()
   })
 
-  it('still explains a refusal whose target the engine did not name', () => {
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+  it('still explains a refusal whose target the engine did not name', async () => {
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     violate({ blocked: '' })
     const notice = screen.getByTestId(NOTICE)
     expect(screen.queryByTestId('web-preview-frame-blocked-origin')).toBeNull()
@@ -184,22 +193,22 @@ describe('WebPreviewPanel - a refused in-frame navigation is explained', () => {
 })
 
 describe('WebPreviewPanel - other policy reports leave the frame alone', () => {
-  it('ignores a refusal of the framed address itself', () => {
+  it('ignores a refusal of the framed address itself', async () => {
     // The frame's own first load being refused is not a navigation away from a
     // page that loaded; the panel's embed explanations own that case.
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     violate({ blocked: new URL(PICKED).origin })
     expect(screen.queryByTestId(NOTICE)).toBeNull()
   })
 
-  it('keeps the frame mounted when a document-level report came from elsewhere', () => {
+  it('keeps the frame mounted when a document-level report came from elsewhere', async () => {
     // Another dashboard frame (an artifact preview, a chat widget) refused the
     // same way reports to the same document and cannot be told apart. The
     // most it may cost is the dismissable line: the preview, and any form
     // input in it, stays.
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     const frame = screen.getByTitle('Web preview')
     const other = document.createElement('iframe')
     document.body.appendChild(other)
@@ -212,17 +221,17 @@ describe('WebPreviewPanel - other policy reports leave the frame alone', () => {
     }
   })
 
-  it('ignores a violation of another directive', () => {
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+  it('ignores a violation of another directive', async () => {
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     violate({ directive: 'img-src', blocked: 'https://cdn.example.com' })
     expect(screen.queryByTestId(NOTICE)).toBeNull()
     expect(screen.getByTitle('Web preview')).toBeInTheDocument()
   })
 
-  it('ignores a frame-src report aimed at some other element', () => {
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
-    fireEvent.click(screen.getByText(':3000'))
+  it('ignores a frame-src report aimed at some other element', async () => {
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
+    fireEvent.click(screen.getByText('localhost:3000'))
     const other = document.createElement('iframe')
     document.body.appendChild(other)
     try {
@@ -233,10 +242,10 @@ describe('WebPreviewPanel - other policy reports leave the frame alone', () => {
     }
   })
 
-  it('ignores a report while nothing is framed', () => {
-    renderWithProviders(<WebPreviewPanel sessionKey="sess-1" />)
+  it('ignores a report while nothing is framed', async () => {
+    await renderPanel(<WebPreviewPanel sessionKey="sess-1" />)
     violate()
-    fireEvent.click(screen.getByText(':3000'))
+    fireEvent.click(screen.getByText('localhost:3000'))
     expect(screen.queryByTestId(NOTICE)).toBeNull()
     expect(screen.getByTitle('Web preview')).toBeInTheDocument()
   })

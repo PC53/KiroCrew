@@ -1212,7 +1212,6 @@ class TestRuntimeShieldSurvivesAFailedAppend:
         monkeypatch.setattr(
             runtime_mod, "agent_scratch", SimpleNamespace(allocate_scratch=lambda _: None)
         )
-        monkeypatch.setattr(runtime_mod, "browser_session_env", lambda env: {})
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("windows", [False, True], ids=["posix", "windows"])

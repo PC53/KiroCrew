@@ -198,9 +198,9 @@ class TestTheShippedContract:
         the section sits between the Browser section and the widget slot."""
         gate.open = True
         # The Browser section is there only while browsing is set up on the host.
-        monkeypatch.setattr("kiro_crew.browser_cli.install.available", lambda: True)
+        monkeypatch.setattr("kiro_crew.browser_harness.ops.browsing_available", lambda home: True)
         prompt = self._resolve(builder)
-        browser_tail = "`browser-auth` carries logged-in sessions.\n\n"
+        browser_tail = "skills carry the workflows.\n\n"
         assert browser_tail + _SECTION + "\n\n" in prompt + "\n\n"
 
     def test_residual_the_slot_follows_the_host_gate_not_an_agents_tools_list(

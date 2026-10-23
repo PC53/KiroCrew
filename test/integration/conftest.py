@@ -143,9 +143,6 @@ cross-home flake three tests later.
      ``auto_update_effect``, read from the boot's install root and policy; a
      stale one is served on the next boot's status frames, and it is also what
      arms the status path's background re-derivation.
-   * ``browser_cli.launch._warned_lifecycle_losses`` -- the warn-once set for
-     browser-socket lifecycle losses; carried across boots it would silence
-     the second boot's first diagnostic.
    * ``sandbox`` cgroup-counter baselines (``_SLICE_THROTTLE_PROBE_SEEN``,
      ``_SLICE_THROTTLE_EDGE_AT``, ``_SLICE_MEMHIGH_EVENTS_SEEN``,
      ``_SLICE_OOM_SEEN``) -- each is "seeded from the first read in this
@@ -195,8 +192,8 @@ cross-home flake three tests later.
 
 4. **Reaped** by ``_teardown_boot``: every asyncio task the boot created that
    ``_shutdown()`` did not end. Production never needs to -- ``os._exit``
-   follows -- so the MCP probe, the terminal-title poller, the browser-snapshot
-   pruner, the follow-up sweep and their kin keep running against a home the
+   follows -- so the MCP probe, the terminal-title poller, the follow-up sweep
+   and their kin keep running against a home the
    test has discarded. Teardown snapshots ``asyncio.all_tasks()`` before the
    boot, cancels every survivor the boot added, and fails the test if one
    refuses to end within ``TASK_REAP_SECS``.
@@ -272,7 +269,6 @@ from kiro_crew import (
 )
 from kiro_crew.acp import client as acp_client
 from kiro_crew.agent_sdk import host_auth
-from kiro_crew.browser_cli import launch as browser_launch
 from kiro_crew.config import live as config_live
 from kiro_crew.config import loader as config_loader
 from kiro_crew.config.loader import CREDENTIAL_KEYS
@@ -786,7 +782,6 @@ def _reset_home_bound_globals() -> None:
     dashboard_updates._auto_effect = None
     dashboard_updates._auto_effect_task = None
     dashboard_updates._shape_effect = None
-    browser_launch._warned_lifecycle_losses.clear()
     # Cleared in place, never rebound: the security facade re-exports
     # ``_path_resolve_degraded`` by identity, and the second-boot witness
     # compares each container's identity.
@@ -832,7 +827,6 @@ def home_bound_globals_are_clear() -> bool:
         and not config_loader._MATERIALIZED_AGENTS_READY
         and governance._CONFIRM_PATTERNS_MEMO is None
         and dashboard_updates._auto_effect is None
-        and not browser_launch._warned_lifecycle_losses
     )
 
 

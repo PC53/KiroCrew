@@ -638,6 +638,21 @@ read other members' files. Ordinary transport authentication, host sandbox,
 credential protection and enterprise policy remain in force. No additional
 member-memory sandbox is required.
 
+### Browser
+
+Which browser the agent drives, and the live view of it in the chat. Every key is
+edited on Settings → Browser and applies without a restart.
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `browser.choice` | `auto` picks your Chrome (with your logins, once remote debugging is allowed in it), then Edge on Windows, then Kiro's own Chromium without a window where there is no display or Chrome's policy forbids remote debugging. `user_chrome` and `kiro_chromium` pin one of those; `headless` runs Kiro's Chromium without a window even on a desktop. Any other stored value reads as `auto` with one warning | `"auto"` |
+| `browser.live.enabled` | Show a live card of the page in the chat turn while the agent browses; click it to take over. Off hides the card, the agent still browses | `true` |
+| `browser.live.quality` | `auto` adapts picture quality and frame rate to your link (picture first, frame rate second); `high`, `medium` or `low` pins the picture and leaves only the frame rate adaptive | `"auto"` |
+| `browser.live.max_fps` | Frame-rate ceiling of the live view: `15`, `30` or `60`. No frames are sent while the card is off screen | `60` |
+| `browser.live.mask_passwords` | Cover password boxes in the live picture. Passwords are only ever typed by you during a takeover and never pass through the agent | `true` |
+| `browser.first_run_dismissed` | Set once the three setup steps on Settings → Browser are completed or skipped; the page then shows the status card. Clear it to see the steps again | `false` |
+| `dashboard.browser_local_origins` | The loopback origins the side panel's Preview tab may open, each `host:port` with host `localhost`, `127.0.0.1` or `[::1]` (`localhost:5173` for a Vite dev server). The tab is for previewing your own dev server; the agent never drives it, and an outside URL is answered with "Open this in your Chrome, or ask Kiro". Empty keeps every address refused. Entries in any other shape are dropped | `[]` |
+
 ### Skills
 
 | Key | Description | Default |

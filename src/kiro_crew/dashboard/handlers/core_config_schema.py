@@ -40,6 +40,9 @@ from kiro_crew.config.loader import (
     _clamp_compact_wait_secs,
 )
 from kiro_crew.config.sections import (
+    BROWSER_CHOICES,
+    BROWSER_LOCAL_ORIGIN_PATTERN,
+    BROWSER_LOCAL_ORIGINS_MAX,
     COMPACT_WAIT_SECS_MAX,
     COMPACT_WAIT_SECS_MIN,
     DECISION_BUCKET_MAX,
@@ -48,6 +51,8 @@ from kiro_crew.config.sections import (
     EXTERNAL_TERMINAL_APPS,
     FOLDER_SORT_MODES,
     JUDGE_PROVIDERS,
+    LIVE_MAX_FPS_CHOICES,
+    LIVE_QUALITIES,
     SESSION_SORT_MODES,
     TITLE_REFRESH_EVERY_TURNS_MAX,
 )
@@ -459,6 +464,33 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "type": "int",
         "min": DECISION_BUCKET_MIN,
         "max": DECISION_BUCKET_MAX,
+    },
+    # Browser (Settings -> Browser, RFC browser-live-harness section 8). Every
+    # key here is a preference the agent cannot widen anything with: the browser
+    # pick only moves between browsers the discovery order already offers, the
+    # live-view keys shape a stream that reaches OWNER websockets only, and the
+    # first-run flag is UI state. The two closed enums refuse a typo rather than
+    # degrade it, unlike the loader, so a user sees the refusal where they typed.
+    # Values come from the config section itself, so this gate and the loader's
+    # own normalization cannot drift.
+    "browser.choice": {"type": "enum", "values": list(BROWSER_CHOICES)},
+    "browser.first_run_dismissed": {"type": "bool"},
+    "browser.live.enabled": {"type": "bool"},
+    "browser.live.quality": {"type": "enum", "values": list(LIVE_QUALITIES)},
+    "browser.live.max_fps": {"type": "enum", "values": list(LIVE_MAX_FPS_CHOICES)},
+    "browser.live.mask_passwords": {"type": "bool"},
+    # The Preview tab's allowlist (Settings -> Browser -> Local preview). A list
+    # of `host:port` loopback origins; `item_pattern` refuses any other shape at
+    # the write so the editor can say so, and the loader's
+    # `coerce_browser_local_origins` drops anything that still slips in (a
+    # hand-edited file). Bounded like the other `str_list` entries. The gateway's
+    # own port is refused by the tool at use time, not here: this list is read by
+    # a dashboard-only surface the agent never drives.
+    "dashboard.browser_local_origins": {
+        "type": "str_list",
+        "max_items": BROWSER_LOCAL_ORIGINS_MAX,
+        "max_item_len": 64,
+        "item_pattern": BROWSER_LOCAL_ORIGIN_PATTERN,
     },
 }
 

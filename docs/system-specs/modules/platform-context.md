@@ -1434,11 +1434,11 @@ package-installed agent, `"builtin"` for the rest. It has many consumers —
 `agent`, `session`, `context`, `subagent`, `mcp_core`, `cron_script`,
 `slack/handler` and several dashboard modules among them — so treat any list here as
 representative rather than exhaustive.
-- **There is no browser-auth provider hook.** Browsing runs through the external
-  `playwright-cli` binary (`kiro_crew/browser_cli/`), and a logged-in session
-  reaches that binary through the CLI's own surfaces (`state-save` /
-  `state-load`, `attach --extension`) rather than through an in-process
-  provider.
+- **There is no browser-auth provider hook.** The agent's browser is the user's
+  own Chrome (or Kiro's Chromium) behind the gateway's CDP relay
+  ([browser module spec](browser.md)); a login happens when the person takes
+  the live card over and signs in themselves, never through an in-process
+  provider and never through the agent.
 - `hooks.register_internal_read_path(read_id, rel_path)` — guarded seam adding a
   fixed-path entry to `_INTERNAL_READ_ALLOWLIST` (rejects `..`/absolute/
   non-sensitive/repoint).

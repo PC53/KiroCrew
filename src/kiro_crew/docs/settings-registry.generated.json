@@ -23,17 +23,44 @@
       "configKey": "auto_update"
     },
     {
-      "id": "browser.attach-token",
-      "label": "Extension token (optional)",
+      "id": "browser.mask-password-fields-in-the-picture",
+      "label": "Mask password fields in the picture",
       "tab": "browser",
-      "route": "/settings/browser?highlight=browser.attach-token"
+      "route": "/settings/browser?highlight=key%3Abrowser.live.mask_passwords",
+      "description": "Passwords are typed only by you, during a takeover. They never pass through Kiro and never appear in a frame.",
+      "configKey": "browser.live.mask_passwords"
     },
     {
-      "id": "browser.use-the-built-in-browser",
-      "label": "Use the built-in browser",
+      "id": "browser.max-frame-rate",
+      "label": "Max frame rate",
       "tab": "browser",
-      "route": "/settings/browser?highlight=key%3Adashboard.use_builtin_browser",
-      "configKey": "dashboard.use_builtin_browser"
+      "route": "/settings/browser?highlight=key%3Abrowser.live.max_fps",
+      "description": "60 is the most this machine streams. Nothing is sent while the card is off screen.",
+      "configKey": "browser.live.max_fps"
+    },
+    {
+      "id": "browser.pick-a-browser-by-hand",
+      "label": "Pick a browser by hand",
+      "tab": "browser",
+      "route": "/settings/browser?highlight=key%3Abrowser.choice",
+      "description": "Automatic tries your Chrome, then Edge on Windows, then Kiro’s Chromium. A hand pick skips that order.",
+      "configKey": "browser.choice"
+    },
+    {
+      "id": "browser.quality",
+      "label": "Quality",
+      "tab": "browser",
+      "route": "/settings/browser?highlight=key%3Abrowser.live.quality",
+      "description": "Auto adapts frame rate and picture to your link: a slow link lowers the picture first, then the frame rate.",
+      "configKey": "browser.live.quality"
+    },
+    {
+      "id": "browser.show-the-live-view-in-chat",
+      "label": "Show the live view in chat",
+      "tab": "browser",
+      "route": "/settings/browser?highlight=key%3Abrowser.live.enabled",
+      "description": "When Kiro uses the browser, the turn shows a live card. Click the picture to take over.",
+      "configKey": "browser.live.enabled"
     },
     {
       "id": "channels.allowed-emails-webex",

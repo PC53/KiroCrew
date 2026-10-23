@@ -131,10 +131,18 @@ from typing import Any, Final
 from urllib.parse import urlsplit
 
 from kiro_crew import dashboard_frame, dashboard_synth, github_runner, platform_compat
-from kiro_crew.browser_cli.launcher import _SANDBOX_MARKERS
 from kiro_crew.constants import DEFAULT_SPAWN_MIN_MEMORY_GB
 
 logger = logging.getLogger(__name__)
+
+#: Chromium's own stderr lines when it cannot set up its process sandbox (no
+#: unprivileged user namespaces). Matched against the verify browser's log to
+#: name the cause instead of quoting a stack.
+_SANDBOX_MARKERS = (
+    "No usable sandbox",
+    "sandbox initialization failed",
+    "Failed to initialize sandbox.",
+)
 
 __all__ = [
     "DATA_SYNTHETIC",

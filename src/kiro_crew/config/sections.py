@@ -179,6 +179,19 @@ from kiro_crew.config.sections_agent_fields import (  # noqa: F401
     normalize_agent_model,
     worker_session_defaults,
 )
+from kiro_crew.config.sections_browser import (  # noqa: F401
+    BROWSER_CHOICE_AUTO,
+    BROWSER_CHOICES,
+    LIVE_MAX_FPS_CHOICES,
+    LIVE_MAX_FPS_DEFAULT,
+    LIVE_QUALITIES,
+    LIVE_QUALITY_AUTO,
+    BrowserConfig,
+    BrowserLiveConfig,
+    browser_choice_resolution,
+    live_max_fps_resolution,
+    live_quality_resolution,
+)
 from kiro_crew.config.sections_channels import (  # noqa: F401
     _WHATSAPP_GROUP_COOLDOWN_DEFAULT,
     _WHATSAPP_GROUP_MODES,
@@ -231,6 +244,8 @@ from kiro_crew.config.sections_dashboard_hosts import (  # noqa: F401
     _BROWSER_LOCAL_HOSTS,
     _GITHUB_PUBLIC_HOSTS,
     _GITLAB_HOST_NAME_RE,
+    BROWSER_LOCAL_ORIGIN_PATTERN,
+    BROWSER_LOCAL_ORIGINS_MAX,
     _coerce_bitbucket_server_hosts,
     _coerce_github_hosts,
     _coerce_gitlab_hosts,
@@ -456,6 +471,7 @@ _OWNERS = (
     "kiro_crew.config.sections_channels",
     "kiro_crew.config.sections_telegram",
     "kiro_crew.config.sections_stt",
+    "kiro_crew.config.sections_browser",
     "kiro_crew.config.sections_decisions",
     "kiro_crew.config.sections_telemetry",
 )

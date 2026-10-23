@@ -66,8 +66,10 @@ function readPanel(file: string): string {
  * an unlisted file fails, so the choice is always conscious.
  */
 const UNMAPPED_PANELS: Record<string, string> = {
+  'BrowserEngineSection.tsx': "the Browser tab's Engine rows (Harness version, Kiro's Chromium) with a Redownload action and a locked Privacy statement; status and one action, no setting of its own",
+  'BrowserFirstRun.tsx': "the Browser tab's three-step first-run list; its buttons install, open Chrome or dismiss (browser.first_run_dismissed is written by BrowserPanel, which is mapped), no searchable setting",
+  'BrowserStatusCard.tsx': "the Browser tab's status card (browser in use, connection, fallback order) with Test and Disconnect actions; it reports the engine and holds no setting",
   'KiroHarnessFallbackNote.tsx': 'informational note ChatPanel mounts above the fallback pickers on a Kiro harness, zero controls',
-  'BrowserInstallStatus.tsx': 'read-only install progress region BrowserPanel mounts above its sections, zero controls',
   'ChannelDisabledPanel.tsx': 'informational placeholder (locked/loading/error states), zero controls',
   'ChannelFolderBackfill.tsx': 'one action button shared by the channel panels; files existing conversations into the folder the OWNING panel configures, and holds no setting of its own',
   'CustomSoundsSection.tsx': 'the Notifications tab\'s add-a-sound form (name + tones) and the list of saved sounds; it creates entries rather than holding settings, and the sounds it saves are chosen through the per-category pickers NotificationsPanel already indexes',
@@ -205,6 +207,10 @@ type BareCounts = Partial<Record<(typeof BARE_CONTROL_TAGS)[number], number>>
  * settingsManual.ts entry; "transient" means it is not a persistent setting.
  */
 const WAIVED_BARE_CONTROLS: Record<string, { counts: BareCounts; reason: string }> = {
+  'BrowserLocalOrigins.tsx': {
+    counts: { Input: 1 },
+    reason: "the chip editor's entry field for a new origin -- part of the dashboard.browser_local_origins composite the extractor indexes whole (the list carries the configKey)",
+  },
   'AboutPanel.tsx': {
     counts: { SegmentedControl: 2 },
     reason: 'the two channel SegmentedControls share manual: about.update-channel',
@@ -212,10 +218,6 @@ const WAIVED_BARE_CONTROLS: Record<string, { counts: BareCounts; reason: string 
   'ChatPanelLinkPatternsEditor.tsx': {
     counts: { Input: 2 },
     reason: "LinkPatternsEditor's per-row pattern/url fields — part of a composite the extractor indexes whole (chat.text-link-patterns)",
-  },
-  'ConnectBrowserSection.tsx': {
-    counts: { Input: 1 },
-    reason: 'attach-token credential field with Save/Clear semantics (manual: browser.attach-token)',
   },
   'DecisionsCard.tsx': {
     counts: { input: 1 },

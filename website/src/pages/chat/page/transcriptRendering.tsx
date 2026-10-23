@@ -499,7 +499,7 @@ export function useTranscriptRendering({
     const item = renderedDisplayItems[i]
     if (!item) return null
     if (item.kind === 'turn') {
-      return <TurnBlock turn={item} renderItem={renderTurnItem} collapseAll={chatConfig.collapseAllSteps} appToolCallIds={appToolCallIds} disclosure={undefined} disclosureKey={`farm-${i}`} onDisclosureChange={() => {}} />
+      return <TurnBlock turn={item} renderItem={renderTurnItem} collapseAll={chatConfig.collapseAllSteps} appToolCallIds={appToolCallIds} disclosure={undefined} disclosureKey={`farm-${i}`} onDisclosureChange={() => {}} browserLiveSessionKey={activeSlot ?? undefined} />
     }
     return (
       <div data-content-column="" className={`px-4 mx-auto w-full py-1 empty:hidden`} style={{ maxWidth: 'var(--mc-content-width, 900px)' }}>

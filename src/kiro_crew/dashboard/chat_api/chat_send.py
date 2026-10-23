@@ -952,8 +952,8 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         return refusal
 
     # No per-message browse marker: browsing is a capability, not a per-turn
-    # gate. The agent drives a browser by running `playwright-cli` shell
-    # commands, so the capability is simply whether that binary is on PATH. The
+    # gate. The agent drives a browser through the `browser` tool, which checks
+    # the capability itself on every call. The
     # agent itself decides whether to operate a browser or read with web_fetch
     # (the system prompt and the kirocrew-commands / web-browse skills tell it
     # how), so the backend injects nothing here.
