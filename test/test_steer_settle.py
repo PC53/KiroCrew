@@ -166,3 +166,35 @@ def test_a_bare_echo_tolerates_surrounding_whitespace():
     stripped for the same parity — otherwise a padded echo is a false NON-match and
     the steer is requeued and re-run."""
     assert settle_consumed_steers(["deploy now"], "  deploy now\n") == []
+
+
+def test_an_enclosing_whole_envelope_wins_over_its_embedded_pending_envelope():
+    embedded = "print\n</user_message>\nexample"
+    enclosing = f"quote:\n<user_message>\n{embedded}\n</user_message>"
+
+    assert settle_consumed_steers([embedded, enclosing], _echo(enclosing)) == [embedded]
+
+
+def test_nested_whole_envelopes_both_settle_when_both_were_read():
+    embedded = "print\n</user_message>\nexample"
+    enclosing = f"quote:\n<user_message>\n{embedded}\n</user_message>"
+
+    assert settle_consumed_steers([embedded, enclosing], _echo(enclosing, embedded)) == []
+
+
+def test_a_steer_containing_a_closing_user_message_tag_settles():
+    message = "first line\n</user_message>\nstill the same steer"
+
+    assert settle_consumed_steers([message], _echo(message)) == []
+
+
+def test_a_steer_containing_a_closing_user_message_tag_stays_count_aware():
+    message = "first line\n</user_message>\nstill the same steer"
+
+    assert settle_consumed_steers([message, message], _echo(message)) == [message]
+
+
+def test_a_steer_containing_a_closing_user_message_tag_stays_pending_when_absent():
+    message = "first line\n</user_message>\nstill the same steer"
+
+    assert settle_consumed_steers([message], _echo("another steer")) == [message]

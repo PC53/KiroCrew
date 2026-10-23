@@ -214,6 +214,33 @@ ACP_BACKENDS_STEERING_REQUEST = frozenset(
 # denial already ended the turn it was meant for.
 ACP_BACKENDS_STEER_CONCURRENT_PROMPT = frozenset({ACP_BACKEND_OPENCODE})
 
+# Backends whose ``_session/steer/clear`` drops the steers the running turn has not
+# read yet and names exactly those, so a pending steer can be taken back. Read by
+# ``supports_steer_retract``; the dashboard's Unsend, Edit and Queue instead on a
+# pending steer exist only on a member.
+#
+# kiro-cli is a member on a LIVE capture against kiro-cli 2.33.1:
+# ``test/fixtures/acp_frames/kiro/steering-clear-live.jsonl``. Two steers sent while
+# a shell call ran were each answered ``{queued: true}`` and echoed as
+# ``AgentExecutionUserMessageQueued``. ``_session/steer/clear`` was answered
+# ``{cleared: true}`` and followed by ``AgentExecutionUserMessageCleared`` naming
+# both, and the turn's answer obeyed neither. A steer sent after the clear was
+# injected and obeyed. The clear drops EVERY pending steer, so the caller sends
+# again the ones it did not mean to take back.
+# ``test/fixtures/acp_frames/kiro/steering-clear-after-inject-live.jsonl`` is the
+# other order: a steer already reported by ``AgentExecutionSteeringInjected`` is not
+# named by a later clear, which names only the steer still pending, and a clear
+# with nothing pending sends no ``AgentExecutionUserMessageCleared`` at all. The
+# answer is the same ``{cleared: true}`` either way, so only that notification is
+# evidence of a drop.
+#
+# KAS is not a member, measured against KAS through kiro-cli 2.33.1
+# (``--agent-engine v3``): its clear answered ``{cleared: true, messageIds: [...]}``
+# naming two steers ``steering_injected`` had already reported, and the turn obeyed
+# both. Its answer and its ``steering_cleared`` name steers the turn already read,
+# so neither can tell a dropped steer from a delivered one.
+ACP_BACKENDS_STEER_RETRACT = frozenset({ACP_BACKEND_KIRO})
+
 # Backends that can serve a MANUAL ``/compact`` (the user-typed slash command).
 # Every member acts on the ``/compact`` prompt that ``AcpProvider.compact()``
 # sends. They do not all answer it the same way, and that split is

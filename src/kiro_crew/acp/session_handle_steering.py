@@ -1,15 +1,16 @@
 """Steering a live turn.
 
-The steer entry, the codex steering-request protocol, settling abandoned answers, and
-the injected, proven and denied steer bookkeeping the dispatch loop reads.
+The steer entry, kiro-cli's request to drop the steers a turn has not read, the codex
+steering-request protocol, settling abandoned answers, and the injected, proven and
+denied steer bookkeeping the dispatch loop reads.
 
 Each function here whose first parameter is ``self`` is an ``AcpSessionHandle`` method: the
 class binds it by name, so it reads and writes the session's own state on the instance,
 and a patch of the method on the class or on an instance reaches every caller.
 
-Instance fields written: ``_abandoned_steering``, ``_steering_answers``,
-``_steering_cancel_tasks``, ``_steering_settled``, ``_steers_accepted``,
-``_steers_proven``, ``_turn_steering_denied``.
+Instance fields written: ``_abandoned_steering``, ``_steer_clear_refused``,
+``_steering_answers``, ``_steering_cancel_tasks``, ``_steering_settled``,
+``_steers_accepted``, ``_steers_proven``, ``_turn_steering_denied``.
 
 Instance fields read: ``_awaiting_permission``, ``_cancelled``, ``_prompt_starts``,
 ``_prompt_written``, ``_runtime``, ``_session_id``, ``_turn_done``.
@@ -24,11 +25,14 @@ from typing import TYPE_CHECKING, Any
 
 from kiro_crew.acp.session_handle_runtime_contract import AcpRuntimeDead
 from kiro_crew.acp.types import (
+    ACP_BACKENDS_STEER_RETRACT,
     ACP_BACKENDS_STEERING_REQUEST,
     MAX_STEERING_ANSWERS,
     MAX_STEERING_TEXT_CHARS,
     METHOD_CANCEL,
+    METHOD_SESSION_STEER_CLEAR,
     METHOD_SESSION_STEERING,
+    STEER_CLEAR_ANSWER_WAIT_SECS,
     STEERING_ANSWER_WAIT_SECS,
     STEERING_INJECTED,
     STEERING_STARTED_NEW_TURN,
@@ -82,6 +86,50 @@ async def steer(self: AcpSessionHandle, message: str) -> bool:
     # end up on this line. A reader of the stamp therefore needs no
     # per-transport wiring. See ``last_steer_monotonic``.
     self._last_steer_monotonic = time.monotonic()
+    return True
+
+
+async def clear_pending_steers(self: AcpSessionHandle) -> bool | None:
+    """Ask kiro-cli to drop every steer it holds that the turn has not read.
+
+    Only a host in ``ACP_BACKENDS_STEER_RETRACT`` has the request; anywhere else,
+    and with no session, nothing is sent and the answer is False. True means
+    kiro-cli answered the request, which it does with ``{cleared: true}`` whether or
+    not anything was pending. It is not evidence of a drop: that is the
+    ``AgentExecutionUserMessageCleared`` notification which follows the answer and
+    reaches the turn as ``EVENT_STEER_DROPPED``. False means the request was
+    refused (a build without it answers ``-32601``), so nothing was dropped and the
+    session stops offering it. None means no answer came within
+    ``STEER_CLEAR_ANSWER_WAIT_SECS``, so whether anything was dropped is unknown.
+
+    The answer is read off the session queue (``send_request_for_answer``), so the
+    turn's own dispatch loop never sees it, and this call never waits on that loop.
+    A runtime that dies under the write raises, as a steer's write does.
+    """
+    if (
+        self._runtime.acp_backend not in ACP_BACKENDS_STEER_RETRACT
+        or not self._session_id
+        or self._steer_clear_refused
+    ):
+        return False
+    answer = await self._runtime.send_request_for_answer(
+        METHOD_SESSION_STEER_CLEAR, {"sessionId": self._session_id}
+    )
+    done, _ = await asyncio.wait({answer}, timeout=STEER_CLEAR_ANSWER_WAIT_SECS)
+    if not done:
+        self._runtime.forget_request(answer)
+        return None
+    if answer.cancelled():
+        return None
+    error = answer.exception()
+    if isinstance(error, AcpRuntimeDead):
+        return None
+    if error is not None:
+        # The class only, as for a refused steering request: the text is the
+        # backend's.
+        logger.info("steer clear on %s refused: %s", self._session_id, type(error).__name__)
+        self._steer_clear_refused = True
+        return False
     return True
 
 

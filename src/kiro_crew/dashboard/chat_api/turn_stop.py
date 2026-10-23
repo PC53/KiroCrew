@@ -559,6 +559,12 @@ async def stop_slot_turn(
             slot,
             [str(entry.get("content", "")) for entry in discarded],
         )
+        # A take-back still in flight is settled first, as at any turn's end: an
+        # Unsend or an Edit never reached the turn, so its row is marked taken back
+        # instead of being left as something the person said.
+        from kiro_crew.dashboard import steer_retract
+
+        steer_retract.on_turn_ending(state, slot)
         # Hard kill = "discard everything": drop unconsumed steers too, so the
         # end-of-turn requeue (chat_runner finally) has nothing to resurrect.
         # Mirrors the queue clear above; a soft stop preserves both.

@@ -58,6 +58,7 @@ from kiro_crew.acp.types import (
     EVENT_MCP_SERVER_INIT_FAILURE,
     EVENT_MCP_SERVER_INITIALIZED,
     EVENT_STEER_CONSUMED,
+    EVENT_STEER_DROPPED,
     STOP_CLASS_FAILED,
     STOP_REASON_CANCELLED,
     STOP_REASON_COMPACTION_FAILED,
@@ -442,6 +443,7 @@ from kiro_crew.dashboard.chat_turn.steer_queue import (  # noqa: F401
     _has_user_queued_followup,
     _mark_steer_row_state,
     _on_steer_consumed,
+    _on_steer_dropped,
     _queue_entry_is_orchestration,
     _requeue_unconsumed_steers,
     _settle_consumed_steers,
@@ -2079,6 +2081,8 @@ async def _run_chat(
             elif event.kind == EVENT_STEER_CONSUMED:
                 await _on_steer_consumed(turn, event)
                 _person_steered_turn = turn._person_steered_turn
+            elif event.kind == EVENT_STEER_DROPPED:
+                await _on_steer_dropped(turn, event)
             elif event.kind == EVENT_COMPACTION_STATUS:
                 await _on_compaction_status(turn, event)
             elif event.kind == EVENT_CLEAR_STATUS:

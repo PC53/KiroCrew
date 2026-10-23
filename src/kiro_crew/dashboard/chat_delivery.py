@@ -70,6 +70,15 @@ STEER_UNAVAILABLE = "unavailable"
 STEER_STATE_WRITTEN = "written"
 STEER_STATE_CONSUMED = "consumed"
 STEER_STATE_REQUEUED = "requeued"
+# The fourth state, reached only from `written`: the person took the steer back
+# before the turn read it (`dashboard/steer_retract.py`). The row stays, so the
+# transcript keeps its place, and says what became of the text.
+STEER_STATE_RETRACTED = "retracted"
+# Row meta: this `written` steer can be taken back. Stamped only where the take-back
+# works -- the session's own human typed it into the composer, and the running
+# harness can drop a steer its turn has not read -- so the dashboard draws the
+# controls from the row alone.
+STEER_RETRACTABLE_META = "steerRetract"
 
 # Upper bound on a client-minted ``meta.sendId`` accepted into the steer path.
 # Client mints are ~17 chars; the bound exists because the value is raw client
@@ -241,6 +250,22 @@ def _queued_entry_id(slot: Any, delivery_id: str) -> str:
         if isinstance(meta, dict) and meta.get("steer_delivery_id") == delivery_id:
             return str(item.get("id") or "")
     return ""
+
+
+def is_retracted_steer_row(row: dict[str, Any]) -> bool:
+    """Whether *row* is a steer the person took back before the turn read it.
+
+    The row keeps its place in the transcript with its text cleared, so a walk
+    that takes the nearest ``user`` row as the request has to step past it: the
+    turn never read it, and there is nothing in it to run again.
+    """
+    meta = row.get("meta")
+    return (
+        row.get("role") == "user"
+        and isinstance(meta, dict)
+        and meta.get("steer") is True
+        and meta.get("steerState") == STEER_STATE_RETRACTED
+    )
 
 
 def find_written_steer_row(
@@ -430,6 +455,12 @@ async def steer_into_running_turn(
     send_id = normalize_send_id(send_id)
     quote = quote_meta(attachments)
     attachments = attachment_meta(attachments)
+    # A take-back's `_session/steer/clear` drops every steer kiro-cli holds when it
+    # runs, so this steer is not written until that clear has been answered.
+    # circular import: steer_retract imports this module at module level.
+    from kiro_crew.dashboard import steer_retract
+
+    await steer_retract.wait_for_clear(slot)
     client = getattr(slot, "_acp_client", None)
     if client is None or not getattr(client, "supports_steer", False):
         return STEER_UNAVAILABLE
@@ -904,6 +935,19 @@ async def steer_into_running_turn(
         meta.update(attachments)
     if quote:
         meta.update(quote)
+    # Offered only on a steer still waiting for the turn, typed by the session's
+    # own human into the composer, on a harness that can drop it unread. A peer's,
+    # a channel's or an automation's steer is not that person's to take back.
+    _retractable = (
+        _state == STEER_STATE_WRITTEN
+        and user_origin
+        and not channel_origin
+        and nudge_meta is None
+        and not responsive
+        and getattr(client, "supports_steer_retract", False) is True
+    )
+    if _retractable:
+        meta[STEER_RETRACTABLE_META] = True
     # The row survives a page reload via the dirty-flush cycle. The session's own
     # human's steer is stored as typed, like an ordinary send's row; a peer's is
     # stored sanitized, because its text has no human author to be its reader. A
@@ -945,6 +989,8 @@ async def steer_into_running_turn(
         # requeued; a row already persisted as consumed is terminal.
         "steerState": _state,
     }
+    if _retractable:
+        push_payload[STEER_RETRACTABLE_META] = True
     # The row's own id, so the client stores it and the later state patch -- which
     # is keyed on `mid` -- can find this row. Without it the client row has no
     # `mid`, the mid-keyed patch matches nothing, and the promotion is a silent

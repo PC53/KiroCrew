@@ -46,8 +46,48 @@ def settle_consumed_steers(
     """
     if not snapshot.strip():
         return list(pending)
-    counts: dict[str, int] = {}
-    blocks = _BLOCK_RE.findall(snapshot)
+    # The steer RPC wraps message.strip(); pending stores the raw message.
+    # Strip for parity so whitespace never causes a false NON-match.
+    #
+    # Redact for parity too. The ACP layer redacts the echo before it reaches
+    # any surface, so a credential-bearing steer arrives back with the secret
+    # replaced. Comparing that against the RAW pending text can never match,
+    # and a falsely-unmatched steer is requeued, running an already-injected
+    # question a second time. Both sides go through the same redactor.
+    stripped = [message.strip() for message in pending]
+    keys = [redact_text(message) for message in stripped]
+
+    # A steer can contain the envelope's closing tag. Match those entries by
+    # their exact whole envelope first, before the non-greedy parser can cut
+    # their content at the inner tag. Enclosing candidates are longer than an
+    # envelope embedded inside them, so longest-first makes the outer message
+    # claim its span before the nested pending text can. Each pending entry can
+    # still claim at most one span, and removing a match keeps the parser
+    # count-aware: the same span cannot account for a second entry.
+    blocks: list[str] = []
+    unparsed_snapshot = snapshot
+    whole_envelopes: list[tuple[int, int, str, str]] = []
+    for pending_index, (message, key) in enumerate(zip(stripped, keys)):
+        if "</user_message>" not in message:
+            continue
+        for candidate in dict.fromkeys((key, message)):
+            envelope = f"<user_message>\n{candidate}\n</user_message>"
+            whole_envelopes.append((len(envelope), pending_index, candidate, envelope))
+
+    claimed_pending: set[int] = set()
+    for _length, pending_index, candidate, envelope in sorted(
+        whole_envelopes, key=lambda item: item[0], reverse=True
+    ):
+        if pending_index in claimed_pending:
+            continue
+        start = unparsed_snapshot.find(envelope)
+        if start < 0:
+            continue
+        blocks.append(candidate)
+        claimed_pending.add(pending_index)
+        unparsed_snapshot = unparsed_snapshot[:start] + unparsed_snapshot[start + len(envelope) :]
+
+    blocks.extend(_BLOCK_RE.findall(unparsed_snapshot))
     if not blocks:
         # KAS does not wrap, and only kiro-cli does. kiro-cli sends
         # ``steering_consumed`` with every injected steer ``<user_message>``-wrapped,
@@ -68,22 +108,14 @@ def settle_consumed_steers(
         # ``message.strip()`` and a wrapped block is therefore already stripped by its
         # producer, while a bare ``content`` field carries whatever KAS put there.
         blocks = [snapshot.strip()]
+
+    counts: dict[str, int] = {}
     for block in blocks:
         # Already redacted upstream; re-running is idempotent and makes both
         # sides of the comparison come from the identical function rather than
         # relying on the caller having done it.
         key = redact_text(block)
         counts[key] = counts.get(key, 0) + 1
-    # The steer RPC wraps message.strip(); pending stores the raw message.
-    # Strip for parity so whitespace never causes a false NON-match.
-    #
-    # Redact for parity too. The ACP layer redacts the echo before it reaches
-    # any surface, so a credential-bearing steer arrives back with the secret
-    # replaced. Comparing that against the RAW pending text can never match,
-    # and a falsely-unmatched steer is requeued — running an
-    # already-injected question a second time, on exactly the questions where
-    # that is least acceptable. Both sides go through the same redactor.
-    keys = [redact_text(message.strip()) for message in pending]
     group_size: dict[str, int] = {}
     group_raw: dict[str, set[str]] = {}
     for message, key in zip(pending, keys):
