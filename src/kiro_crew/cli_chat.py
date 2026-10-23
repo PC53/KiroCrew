@@ -31,8 +31,8 @@ from kiro_crew.constants import (
     DENY_CAUSE_AUDIT_UNAVAILABLE,
     DENY_CAUSE_HOOK_ERROR,
     DENY_CAUSE_POLICY,
-    STEER_NOTICE_BOUND_SECS,
 )
+from kiro_crew.deny_notice import steer_notice_into_refused_turn
 from kiro_crew.hooks import (
     TOOL_DENY,
     HookManager,
@@ -787,17 +787,9 @@ async def _steer_user_reply(provider: LLMProvider, event: LLMEvent, reply: str) 
     next message instead of losing it. ``CancelledError`` propagates under the
     prompt's own session-abort contract (see :func:`_answer_permission`).
     """
-    if not getattr(provider, "supports_refusal_steer", False):
-        return False
-    notice = _user_reply_notice(event.title or "", reply)
-    try:
-        sent = await asyncio.wait_for(provider.steer(notice), timeout=STEER_NOTICE_BOUND_SECS)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.debug("CLI reply steer failed; it is sent as the next message", exc_info=True)
-        return False
-    return sent is not False
+    return await steer_notice_into_refused_turn(
+        provider, _user_reply_notice(event.title or "", reply)
+    )
 
 
 async def _audit_off_loop(
