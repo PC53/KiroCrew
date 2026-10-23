@@ -1119,6 +1119,71 @@ describe('chatSlice active-slot frame branches', () => {
     expect(latest.meta?.resolved).toBe('rejected')
   })
 
+  it('a resolved elicitation card survives a refresh whose page omits it, like a permission card', () => {
+    // The server tail leaves an answered elicitation out (it is transient on
+    // disk), so the client's own copy -- with its decision and answer -- is
+    // re-seated into the refreshed page, keyed by the row's mid.
+    const store = makeStore()
+    store.dispatch(setActiveSlot('A'))
+    store.dispatch(replaceMessages([
+      msg({ role: 'user', content: 'go', ts: '2026-01-01T00:00:00Z', meta: { mid: 'm-u' } }),
+      msg({ role: 'elicitation', content: 'Really?', ts: '2026-01-01T00:00:01Z', meta: { approval_id: 'el-9', mid: 'm-el', resolved: 'accept', answer: { confirm: true } } }),
+      msg({ role: 'assistant', content: 'done', ts: '2026-01-01T00:00:02Z', meta: { mid: 'm-a' } }),
+    ]))
+    let s = chat(store)
+    s = chatReducer(s, lifecycle('chat/refreshSlot/fulfilled', 'A', detail('A', [
+      msg({ role: 'user', content: 'go', ts: '2026-01-01T00:00:00Z', meta: { mid: 'm-u' } }),
+      msg({ role: 'assistant', content: 'done', ts: '2026-01-01T00:00:02Z', meta: { mid: 'm-a' } }),
+    ])))
+    const card = s.messages.find(m => m.role === 'elicitation')
+    expect(card?.meta?.resolved).toBe('accept')
+    expect(card?.meta?.answer).toEqual({ confirm: true })
+    expect(s.messages.map(m => m.role)).toEqual(['user', 'elicitation', 'assistant'])
+  })
+
+  it('a PENDING elicitation card the refreshed page no longer lists is retired as stale, not left actionable', () => {
+    // The gateway keeps an open ask in its tail; its absence means it was
+    // answered or expired while this tab was away.
+    const store = makeStore()
+    store.dispatch(setActiveSlot('A'))
+    store.dispatch(replaceMessages([
+      msg({ role: 'user', content: 'go', ts: '2026-01-01T00:00:00Z', meta: { mid: 'm-u' } }),
+      msg({ role: 'elicitation', content: 'Really?', ts: '2026-01-01T00:00:01Z', meta: { approval_id: 'el-8', mid: 'm-el8' } }),
+    ]))
+    let s = chat(store)
+    s = chatReducer(s, lifecycle('chat/refreshSlot/fulfilled', 'A', detail('A', [
+      msg({ role: 'user', content: 'go', ts: '2026-01-01T00:00:00Z', meta: { mid: 'm-u' } }),
+      msg({ role: 'assistant', content: 'done', ts: '2026-01-01T00:00:02Z', meta: { mid: 'm-a' } }),
+    ])))
+    const card = s.messages.find(m => m.role === 'elicitation')
+    expect(card?.meta?.resolved).toBe('stale')
+    // A card the page still lists as open stays open.
+    const store2 = makeStore()
+    store2.dispatch(setActiveSlot('A'))
+    store2.dispatch(replaceMessages([
+      msg({ role: 'elicitation', content: 'Really?', ts: '2026-01-01T00:00:01Z', meta: { approval_id: 'el-8', mid: 'm-el8' } }),
+    ]))
+    const s2 = chatReducer(chat(store2), lifecycle('chat/refreshSlot/fulfilled', 'A', detail('A', [
+      msg({ role: 'elicitation', content: 'Really?', ts: '2026-01-01T00:00:01Z', meta: { approval_id: 'el-8', mid: 'm-el8' } }),
+    ])))
+    expect(s2.messages.find(m => m.role === 'elicitation')?.meta?.resolved).toBeUndefined()
+  })
+
+  it('resolveByApprovalId writes an elicitation answer onto the row the mid names', () => {
+    const store = makeStore()
+    store.dispatch(setActiveSlot('A'))
+    store.dispatch(replaceMessages([
+      msg({ role: 'elicitation', content: 'old ask', meta: { approval_id: 'el-1', mid: 'm-old' } }),
+      msg({ role: 'elicitation', content: 'live ask', meta: { approval_id: 'el-1', mid: 'm-live' } }),
+    ]))
+    store.dispatch(resolveByApprovalId({ slot: 'A', id: 'el-1', decision: 'accept', mid: 'm-live', answer: { confirm: true } }))
+    const [old, live] = chat(store).messages
+    expect(live.meta?.resolved).toBe('accept')
+    expect(live.meta?.answer).toEqual({ confirm: true })
+    expect(old.meta?.resolved).toBeUndefined()
+    expect(old.meta?.answer).toBeUndefined()
+  })
+
   it('rejects an active unanswered approval that carries no meta on a new turn', () => {
     const store = makeStore()
     store.dispatch(setActiveSlot('A'))

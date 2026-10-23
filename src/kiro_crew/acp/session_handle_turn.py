@@ -50,6 +50,11 @@ from kiro_crew.acp.client import (
     _raise_acp_error,
     parse_slash_command,
 )
+from kiro_crew.acp.elicitation import (
+    ELICITATION_CANCEL,
+    elicitation_response,
+    is_elicitation_request,
+)
 from kiro_crew.acp.prompt_blocks import build_prompt_blocks, summarize_prompt_structure
 from kiro_crew.acp.session_handle_lifecycle import _CANCEL_GRACE_SECS
 from kiro_crew.acp.session_handle_runtime_contract import AcpRuntimeError
@@ -376,6 +381,9 @@ async def _run_turn(
     self._native_child_tool_call_ids.clear()
     self._permission_options.clear()
     self._permission_gate_events.clear()
+    # An elicitation the last turn left unanswered holds its tool call open on
+    # the engine; it is answered ``cancel`` rather than merely forgotten.
+    await self.cancel_pending_elicitations()
     # Per-turn reset (parity with kiro-cli's authoritative full subagent_list
     # each turn): otherwise a completed sub-agent from a prior turn stays in
     # the roster and is re-emitted in the next turn's EVENT_SUBAGENT_LIST,
@@ -560,6 +568,34 @@ async def _run_turn(
             # covered by the WARNING + SEL record.
             if _stale_sid and _stale_sid != self._session_id:
                 self._pending_reject_notices.append((_stale_sid, str(_stale_title)))
+        elif stale is not None and is_elicitation_request(stale):
+            # An MCP server's elicitation that arrived while no turn was
+            # reading (an abandoned turn's tool still running). Like a stranded
+            # permission it is a server->client REQUEST the engine waits on, so
+            # it is answered -- `cancel`, the answer nobody-was-asked takes --
+            # rather than dropped with the frames around it.
+            for _owed in _stale_owed:
+                self._queue.put_nowait(_owed)
+            _stale_owed.clear()
+            self._audit_elicitation_decision(
+                stale.id, ELICITATION_CANCEL, "stranded_request_pre_turn_drain"
+            )
+            try:
+                await self._runtime.send_response(
+                    stale.id, elicitation_response(ELICITATION_CANCEL)
+                )
+            except asyncio.CancelledError:
+                self._queue.put_nowait(stale)
+                self._turn_done.set()
+                raise
+            except Exception:
+                logger.exception("failed to answer stranded elicitation request")
+                self._runtime._mark_dead("pre-turn drain elicitation cancel failed")
+                continue
+            logger.warning(
+                "cancelled elicitation request id=%s stranded in the pre-turn drain",
+                _loggable_request_id(stale.id),
+            )
         else:
             # Everything that is not a permission request is DISCARDED, which
             # is correct (it belongs to a turn nobody is reading any more) but
