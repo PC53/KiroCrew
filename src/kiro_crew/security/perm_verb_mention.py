@@ -403,24 +403,45 @@ def _writes_a_second_operand(tokens: "list[str]") -> bool:
     exactly as it is with no narrowing at all.  A bare ``-`` counts too, because it
     names standard input as the INPUT and leaves the next word the sink.
     """
+    # The launched program, as ``_argv_programs`` labels it: ``sudo uniq a b``
+    # runs ``uniq``, so its writer reading must not stop at the launcher.
+    labels = _argv_programs(tokens)
     program = ""
     expect_program = True
     operands = 0
-    for token in tokens:
-        if expect_program and token and not _shell_normalizer.ENV_ASSIGNMENT_RE.match(token):
-            program = _program_basename(token)
-            expect_program = False
-            operands = 0
-        elif program in _SECOND_OPERAND_WRITER_PROGRAMS and not (
-            token.startswith("-") and len(token) > 1
-        ):
-            operands += 1
-            if operands >= 2:
-                return True
+    in_launcher_chain = False
+    for index, token in enumerate(tokens):
         if _ends_argv(token):
             program = ""
             expect_program = True
             operands = 0
+            in_launcher_chain = False
+            continue
+        if expect_program and token and not _shell_normalizer.ENV_ASSIGNMENT_RE.match(token):
+            program = _program_basename(token)
+            if index < len(labels) and labels[index] in _SECOND_OPERAND_WRITER_PROGRAMS:
+                # A launcher (``time``/``sudo``/``env`` …) is labelled with the
+                # consumer it runs; the launcher keyword, its options and the
+                # consumer's own program word are not operands, so hold off counting
+                # until the walk passes the actual program token. A command
+                # separator between them (``cat x | time uniq | …``) is never an
+                # operand -- ``_ends_argv`` resets the command above.
+                in_launcher_chain = labels[index] != program
+                program = labels[index]
+            else:
+                in_launcher_chain = False
+            expect_program = False
+            operands = 0
+            continue
+        if program in _SECOND_OPERAND_WRITER_PROGRAMS:
+            if in_launcher_chain:
+                if _program_basename(token) == program:
+                    in_launcher_chain = False
+                continue
+            if not (token.startswith("-") and len(token) > 1):
+                operands += 1
+                if operands >= 2:
+                    return True
     return False
 
 

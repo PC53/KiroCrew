@@ -100,6 +100,7 @@ from .shell_normalizer_walk import (  # noqa: F401  (also re-exported for import
     _push_token_redirection,
     _push_token_shell_read,
     _redirect_consumes_next,
+    _redirect_word_prefix,
     _resolve_param_defaults,
     _resolved_word_view,
     _shell_join_continuations,
@@ -560,6 +561,12 @@ def _python_reads_stdin(later_tokens: list[str]) -> bool:
     return True  # nothing but flags → bare interpreter reads stdin
 
 
+#: The search tools that run a ``--pre`` preprocessor program on each searched file,
+#: so a ``--pre`` argument of theirs is executable rather than data. No other program
+#: defines ``--pre``, so the data-consumer withdrawal for it is gated on one of these.
+_PREPROCESSOR_SEARCH_TOOLS = frozenset({"rg", "ag", "ack"})
+
+
 def _data_consumer_command_disqualified(tokens: "list[str]") -> bool:
     """True where NO token in *tokens* can claim the data-consumer exemption.
 
@@ -592,6 +599,17 @@ def _data_consumer_command_disqualified(tokens: "list[str]") -> bool:
     # ``awk '{print $1}' <file>``, and the list is deliberately a denylist of consumers so
     # that a mistake here costs a false positive, never a bypass.
     if any(_SCRIPT_EXECUTES_RE.search(tok) for tok in tokens):
+        return True
+    # ``rg``/``ag``/``ack`` run a PREPROCESSOR program named by ``--pre`` on every
+    # searched file, so a ``--pre`` argument is executable, not data. Withdraw the
+    # exemption per-command when it is present, the same denylist shape as the
+    # execute-construct sweep above (``--pre-glob`` only filters which files the
+    # preprocessor sees and is not it). Only ``rg``/``ag``/``ack`` define ``--pre``;
+    # for any other program (``grep -e --pre …``) the word is an ordinary data token,
+    # so the withdrawal is gated on one of those tools actually being present.
+    if any(tok == "--pre" or tok.startswith("--pre=") for tok in tokens) and any(
+        _program_basename(tok) in _PREPROCESSOR_SEARCH_TOOLS for tok in tokens
+    ):
         return True
     return False
 
@@ -661,19 +679,176 @@ def _argv_programs(tokens: "list[str]") -> "list[str]":
     leading ``VAR=value`` assignments, which precede the program rather than being
     it.  Asks "what command is this name an argument OF?" -- the difference
     between ``echo <name> <verb>`` (data) and ``ssh host <name> <verb>`` (executed).
+
+    A command whose program is a transparent launcher (``sudo grep …``,
+    ``time grep …``) or ``git grep`` is labelled with the data consumer it runs,
+    when :func:`_launched_consumer` resolves one; every other command keeps its
+    own program name, so a launcher in front of anything else (``sudo <name>
+    <verb>``) is still read as running its arguments.
     """
     programs: list[str] = []
     current = ""
     expect_program = True
-    for token in tokens:
+    start = 0
+    program_index: "int | None" = None
+    for index, token in enumerate(tokens):
         if expect_program and token and not ENV_ASSIGNMENT_RE.match(token):
             current = _program_basename(token)
+            program_index = index
             expect_program = False
         programs.append(current)
         if _ends_argv(token):
+            _relabel_launched_consumer(tokens, programs, start, program_index, index + 1)
             current = ""
             expect_program = True
+            start = index + 1
+            program_index = None
+    _relabel_launched_consumer(tokens, programs, start, program_index, len(tokens))
     return programs
+
+
+def _relabel_launched_consumer(
+    tokens: "list[str]",
+    programs: "list[str]",
+    start: int,
+    program_index: "int | None",
+    stop: int,
+) -> None:
+    """Label ``tokens[start:stop]`` with the consumer its launcher runs, if any."""
+    if program_index is None or programs[program_index] not in _CONSUMER_LAUNCHERS:
+        return
+    # A glued control ``&``/``&&`` (``grep x& kirocrew update``) is a command
+    # boundary ``_ends_argv`` does not split on -- it skips ``&`` so ``2>&1`` stays
+    # a redirection -- so the span can run past the launched command into a second
+    # one. Relabelling the whole span would then mask an executed command
+    # (``kirocrew update``) as the data consumer's argument; keep each token's own
+    # program instead, which reads the second command as executed and refuses it.
+    if any(_carries_command_amp(tokens[i]) for i in range(start, stop)):
+        return
+    consumer = _launched_consumer(tokens, program_index, stop)
+    if consumer is not None:
+        programs[start:stop] = [consumer] * (stop - start)
+
+
+def _carries_command_amp(token: str) -> bool:
+    """True if *token* carries a command-separating ``&``, not a redirection.
+
+    ``x&``, ``x&&`` and a mid-token ``x&command`` background or chain a command;
+    ``2>&1``, ``>&2`` and ``&>f`` spell a redirection. An ``&`` is a redirection
+    operator only when it sits next to ``<``/``>`` (``>&``, ``&>``); every other
+    ``&`` is a command separator, wherever it sits in the token.
+    """
+    for i, char in enumerate(token):
+        if char != "&":
+            continue
+        previous = token[i - 1] if i else ""
+        following = token[i + 1] if i + 1 < len(token) else ""
+        if previous == "&" or following == "&":
+            return True  # ``&&``
+        if previous in ("<", ">") or following == ">":
+            continue  # a redirection ``&`` (``2>&1``, ``>&2``, ``&>file``); ``&<`` is none
+        return True
+    return False
+
+
+#: Programs :func:`_launched_consumer` looks through: launchers that exec the
+#: argv after their own options unchanged, plus ``git`` for ``git grep``.
+_CONSUMER_LAUNCHERS = frozenset(
+    {"command", "env", "exec", "git", "nice", "nohup", "sudo", "time", "timeout"}
+)
+
+
+#: A ``timeout`` duration operand: a number with an optional unit suffix.
+_TIMEOUT_DURATION_RE = re.compile(r"\d+(?:\.\d+)?[smhd]?\Z")
+
+
+#: A ``nice`` adjustment written as one word: ``-10``, ``-n10``, ``-n-5``.
+_NICE_GLUED_ADJUSTMENT_RE = re.compile(r"-n?-?\d+\Z")
+
+
+def _git_grep_runs_no_pager(tokens: "list[str]", start: int, stop: int) -> bool:
+    """True if no word in ``tokens[start:stop]`` can be ``git grep``'s pager option.
+
+    ``git grep -O<pager>`` / ``--open-files-in-pager=<pager>`` runs a program on
+    the matching files. Short options bundle and long options abbreviate, so any
+    single-dash word carrying an ``o`` and any ``--o…`` word counts as that option.
+    Words reach here lowercased, so ``-o`` (``--only-matching``) is counted too.
+    """
+    for token in tokens[start:stop]:
+        word = _normalize_operand(token)
+        if word.startswith("--o") or (
+            word.startswith("-") and not word.startswith("--") and "o" in word
+        ):
+            return False
+    return True
+
+
+#: A parameter expansion (``$NAME``, ``${…}``, ``$1``, ``$@`` …) in a program-name
+#: position — but NOT ``$(…)`` command substitution or ``$'…'``/``$"…"`` quoting,
+#: which name a literal. Its resolved value is not known here, so a launched-consumer
+#: exemption must not trust it.
+_PARAM_EXPANSION_RE = re.compile(r"\$\{|\$[A-Za-z0-9_@*#?!-]")
+
+
+def _launched_consumer(tokens: "list[str]", index: int, stop: int) -> "str | None":
+    """The data consumer the launcher at ``tokens[index]`` runs, else None.
+
+    Steps through a chain of launchers in :data:`_CONSUMER_LAUNCHERS`, each with
+    only the option forms modelled here: ``time -p``, ``nice -n N`` (or the one-word
+    adjustment), ``timeout DURATION``, and ``VAR=value`` words after ``env`` or
+    ``sudo``. Any other option word after a launcher returns None, because its
+    arity is not modelled and it could consume the word that follows it. ``git``
+    resolves only as ``git grep`` with the subcommand right after ``git`` and no
+    pager option (:func:`_git_grep_runs_no_pager`), and is labelled ``grep``.
+
+    Returns the resolved program only when it is in ``_DATA_CONSUMER_PROGRAMS``.
+    """
+    j = index
+    while j < stop:
+        # A token that opens a command substitution is not a literal program:
+        # ``env $(echo pkill) -f x`` runs whatever the substitution prints, which
+        # ``_program_basename`` would misread as ``echo``. Its body is judged on
+        # its own by the payload walk; here the launcher keeps its attribution.
+        if tokens[j].lstrip("\"'").startswith(("$(", "`")):
+            return None
+        # A parameter expansion does not establish which program runs: for
+        # ``${runner:-grep}`` bash runs ``$runner``'s value when it is set, not the
+        # ``grep`` fallback ``_program_basename`` resolves it to, so a self-assigned
+        # launcher variable could otherwise label an executed program as a data
+        # consumer. Keep the launcher's attribution rather than trust the fallback.
+        if _PARAM_EXPANSION_RE.search(tokens[j]):
+            return None
+        name = _program_basename(tokens[j])
+        if name == "git":
+            if (
+                j + 1 < stop
+                and _normalize_operand(tokens[j + 1]) == "grep"
+                and _git_grep_runs_no_pager(tokens, j + 2, stop)
+            ):
+                return "grep"
+            return None
+        if name not in _CONSUMER_LAUNCHERS:
+            return name if name in _DATA_CONSUMER_PROGRAMS else None
+        j += 1
+        word = _normalize_operand(tokens[j]) if j < stop else ""
+        if name == "time" and word == "-p":
+            j += 1
+        elif name == "nice" and word == "-n":
+            if j + 1 >= stop or not _normalize_operand(tokens[j + 1]).lstrip("-").isdigit():
+                return None
+            j += 2
+        elif name == "nice" and _NICE_GLUED_ADJUSTMENT_RE.match(word):
+            j += 1
+        elif name == "timeout":
+            if not _TIMEOUT_DURATION_RE.match(word):
+                return None
+            j += 1
+        elif name in ("env", "sudo"):
+            while j < stop and ENV_ASSIGNMENT_RE.match(tokens[j]):
+                j += 1
+        if j < stop and _normalize_operand(tokens[j]).startswith("-"):
+            return None
+    return None
 
 
 def _is_shell_command_flag(token: str) -> bool:

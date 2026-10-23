@@ -22,6 +22,7 @@ part of the argv floor.
 from __future__ import annotations
 
 import re
+import shlex
 from typing import NamedTuple
 
 # The reader names a test instruments on the facade are reached as attributes of
@@ -51,6 +52,7 @@ from .shell_normalizer import (
     _iter_shell_chars,
     _matching_close_paren,
     _redirect_consumes_next,
+    _redirect_word_prefix,
     _resolve_param_defaults,
     _shell_join_continuations,
     _shell_payload_walk,
@@ -410,6 +412,59 @@ def _static_substitution_output(body: str) -> str:
                 continue
             return operand
     return "\x00"
+
+
+#: Characters whose meaning changes when a substitution's output is read back as
+#: command text: quoting, escapes, operators, expansions and comments. Output
+#: carrying any of them is not re-spliced as text by
+#: :func:`_static_substitution_words`.
+_STATIC_OUTPUT_UNSAFE_CHARS = frozenset("'\"\\;&|<>(){}$`#~\n\r")
+
+
+#: ``echo`` option words: only a LEADING run of these is consumed as options.
+_ECHO_OPTION_RE = re.compile(r"-[neE]+\Z")
+
+
+def _static_substitution_words(body: str) -> "str | None":
+    """The FULL output of a literal ``echo``/``printf`` substitution body, else None.
+
+    An unquoted ``$(echo ssh localhost id)`` expands to the three argv words
+    ``ssh localhost id``, so the reconstructed output is every word the command
+    prints, joined by single spaces. :func:`_static_substitution_output` returns
+    one word; this returns the whole line so a caller splicing the output back
+    into the command text reads the argv the shell builds.
+
+    Resolution is literal only: ``echo`` with its leading ``-n``/``-e``/``-E``
+    options consumed, or ``printf`` with a single format operand that carries no
+    ``%`` conversion. Anything else -- a body that does not tokenize, any other
+    program, ``printf`` with arguments or conversions, or output containing a
+    character in :data:`_STATIC_OUTPUT_UNSAFE_CHARS` -- returns None, and the
+    caller falls back to :func:`_static_substitution_output`.
+    """
+    try:
+        words = shlex.split(body)
+    except ValueError:
+        return None
+    if not words:
+        return None
+    program = _shell_normalizer._program_basename(words[0])
+    args = words[1:]
+    if program == "echo":
+        while args and _ECHO_OPTION_RE.match(args[0]):
+            args = args[1:]
+        output = " ".join(args)
+    elif program == "printf":
+        if args and args[0] == "--":
+            args = args[1:]
+        if len(args) != 1 or "%" in args[0] or args[0].startswith("-"):
+            return None
+        output = _decode_printf_escapes(args[0])
+    else:
+        return None
+    output = " ".join(output.split())
+    if not output or _STATIC_OUTPUT_UNSAFE_CHARS.intersection(output):
+        return None
+    return output
 
 
 # An assignment word (``k=kill``): bash only honours these BEFORE the first
@@ -874,19 +929,9 @@ def _self_cli_operands(tokens: "list[str]", i: int) -> "list[str]":
     operands: "list[str]" = []
     depth = 0
     skip_target = False
-    for later in tokens[i + 1 :]:
-        is_redirect, expects_target = _redirect_consumes_next(later)
-        if skip_target:
-            # A separate redirection target (``> FILE``) is a filename: its bytes are
-            # data, not an argv boundary, so a quoted ``;``/``|`` in it (``> 'a;b'``)
-            # must NOT end the scan. Consume it without the boundary/depth bookkeeping.
-            skip_target = False
-            continue
-        if is_redirect:
-            # The redirection operator itself is not an operand and never ends the argv.
-            skip_target = expects_target
-            continue
-        operand = _shell_normalizer._normalize_operand(later)
+
+    def _add_operand(word: str) -> None:
+        operand = _shell_normalizer._normalize_operand(word)
         # ANSI-C ($'...') and locale ($"...") quoting: shlex strips the quotes
         # but leaves the leading ``$``, so a flag hidden as ``$'-v'`` / the hex
         # ``$'\x2d\x76'`` reads as a non-flag operand and shoves the subcommand
@@ -897,6 +942,25 @@ def _self_cli_operands(tokens: "list[str]", i: int) -> "list[str]":
             operand = _decode_printf_escapes(operand[1:])
         if operand and not operand.startswith("-"):
             operands.append(operand)
+
+    for later in tokens[i + 1 :]:
+        is_redirect, expects_target = _redirect_consumes_next(later)
+        if skip_target:
+            # A separate redirection target (``> FILE``) is a filename: its bytes are
+            # data, not an argv boundary, so a quoted ``;``/``|`` in it (``> 'a;b'``)
+            # must NOT end the scan. Consume it without the boundary/depth bookkeeping.
+            skip_target = False
+            continue
+        if is_redirect:
+            # The redirection operator itself is not an operand and never ends the
+            # argv. A word glued in front of it (``restart>/tmp/log``) is still
+            # passed in argv, so it is read as an operand.
+            word = _redirect_word_prefix(later)
+            if word:
+                _add_operand(word)
+            skip_target = expects_target
+            continue
+        _add_operand(later)
         depth += _substitution_depth_delta(later)
         if depth <= 0 and _ends_argv(later):
             break

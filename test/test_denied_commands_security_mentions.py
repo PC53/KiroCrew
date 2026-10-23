@@ -758,11 +758,23 @@ class TestPermissionVerbMentionNarrowing:
         assert walk(f"uniq -c {_CM} /usr/local/bin/git") is True
         assert walk(f"xxd - {_CM}/etc/shadow") is True
         assert walk(f"grep -h '{_CM}' f | xxd a b") is True
+        # A launcher in front of the writer keeps the second-operand reading: the
+        # launcher keyword, its options and the writer's own program word are not
+        # operands, but the two that follow the writer are.
+        assert walk(f"time uniq a {_CM}/usr/local/bin/git") is True
+        assert walk("sudo xxd a /usr/local/bin/git") is True
+        assert walk(f"nice -n 5 uniq in {_CM}/etc/shadow") is True
         # No operand, one operand, or the writer absent: nothing is written.
         assert walk(f"grep -rn '{_CM}' src/ | uniq | head") is False
         assert walk(f"grep -rn '{_CM}' src/ | xxd") is False
         assert walk(f"uniq {_CM}") is False
         assert walk(f"cat {_CM} /usr/local/bin/git") is False
+        # A launcher before an operand-less writer in a pipeline writes nothing:
+        # the following program word and the pipe are not operands.
+        assert walk(f"cat {_CM} | time uniq | head") is False
+        assert walk(f"grep -h '{_CM}' f | sudo uniq | head") is False
+        assert walk("time uniq") is False
+        assert walk("time uniq out") is False
 
     def test_double_quoted_literal_refuses_expansion_machinery(self):
         """The mask covers ``"..."`` only when nothing inside it can run."""

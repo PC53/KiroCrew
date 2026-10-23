@@ -487,7 +487,34 @@ def _url_payload_command(n: int) -> str:
 #: ``paths_lists``: the Meetings app's per-meeting user notes tree, write-denied to
 #: the agent file tools and read-allowed so the dashboard can serve pasted images.
 #: Data, not rule logic: the matcher and every other entry are unchanged.
-_PACKAGE_LINE_BUDGET = 32_447
+#:
+#: Raised again for the shared shell reader the argv floors read:
+#: ``_redirect_word_prefix`` (the literal word in front of a glued redirection stays an
+#: operand), ``_static_substitution_words`` (a literal ``echo``/``printf`` substitution in
+#: program position expands to every word it prints), ``_launched_consumer`` (a launcher
+#: or ``git grep`` with no pager option in front of a data consumer is labelled with that
+#: consumer; a ``--pre`` preprocessor keeps its argument executable; a substitution in
+#: program position is not read as a literal launched program), and
+#: ``_writes_a_second_operand`` reading the program a launcher runs so the second-operand
+#: writer guard holds under ``sudo``/``time``. Most of the lines are the conditions under
+#: which each reading falls back to the fail-closed one, and their docstrings. (Quoted-
+#: heredoc stripping is tracked separately and is not in this diff.)
+#: Two further guards only tighten: ``_launched_consumer`` returns None when its
+#: proposed consumer is a parameter expansion (``${x:-grep}`` does not prove the
+#: program bash runs), and ``_writes_a_second_operand`` holds its operand count until
+#: the walk passes a launched writer's actual program word, so a launcher and a
+#: command separator in front of it are not counted as operands. And
+#: ``_relabel_launched_consumer`` does not relabel across a token carrying a
+#: command-separating ``&`` (``_carries_command_amp`` — ``x&``, ``x&&``, a mid-token
+#: ``x&cmd``; only an ``&`` next to a redirection operator — ``2>&1``, ``>&2``,
+#: ``&>file`` — is not one, and ``&<`` is NOT a redirection, so it separates), so a
+#: launched data consumer's label cannot spread onto a second command chained after
+#: it (``_redirect_word_prefix`` strips the same separating ``&`` off a glued operand
+#: word); and the ``--pre`` data-consumer withdrawal is gated on an
+#: ``rg``/``ag``/``ack`` program (``_PREPROCESSOR_SEARCH_TOOLS``) actually being
+#: present, since only those define ``--pre`` — a ``--pre`` as a ``grep`` search
+#: pattern is ordinary data.
+_PACKAGE_LINE_BUDGET = 32_767
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
