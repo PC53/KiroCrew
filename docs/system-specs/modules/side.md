@@ -190,7 +190,7 @@ second time.
 | turn | POST | `/api/chat/slots/{slot}/side/turn` | Submit question; starts a turn, steers the running one, or queues. A dashboard-user caller must be the owner (`chat.side_turn`); app tokens keep slot scoping |
 | queue cancel | DELETE | `/api/chat/slots/{slot}/side/queue/{queue_id}` | Drop a queued entry; echoes its text back for the composer |
 | queue edit | PATCH | `/api/chat/slots/{slot}/side/queue/{queue_id}` | Rewrite a queued entry in place |
-| close | POST | `/api/chat/slots/{slot}/side/close` | Drop buffer + queue + destroy LLM session |
+| close | POST | `/api/chat/slots/{slot}/side/close` | Drop buffer + queue + destroy LLM session, then tell every tab (`chat.side_closed`); body `{client}` names the tab that asked |
 | stop | POST | `/api/chat/slots/{slot}/side/stop` | Cancel the in-flight side turn (hung-turn escape hatch); idempotent when none is running. Owner-gated like turn (`chat.side_stop`); 409 `side_not_open` when no sidecar is open |
 | tools | GET | `/api/chat/side/tools` | `{read_only_tools, claude_adapter_outdated, claude_adapter_min_version, claude_adapter_update_command, config_unavailable}`: whether a side turn runs read-only tools, from the same check the turn makes (`_side_read_only_tools`), whether an old claude adapter is the only reason it does not, that adapter's floor (`CLAUDE_ACP_SETTING_SOURCES_MIN_VERSION`) and `npm i -g` step (`claude_adapter_install_command`), and whether the config failed to load; the footer reads it |
 
@@ -287,6 +287,20 @@ state's `slotSide` map via a dedicated reducer (`sseSideResult`, owned by
 The main chat assembler never sees these frames — isolation is structural
 (separate event type → separate reducer → separate `slotSide` state key), not
 filter-based.
+
+A run broadcasts its frames only while its sidecar is still the slot's
+(`_run_side_turn`'s `_broadcast`). A close drops the sidecar and every tab clears
+the conversation, and a reopen makes a new sidecar, so a later frame of the old
+run would land in a conversation it does not belong to.
+
+`chat.side_closed` (`{kind, slot, origin_client?}`) says the slot's side
+conversation was closed. Every tab but the one named by `origin_client`, which
+cleared its panel when its request returned, applies `sideClose`. A question that
+tab queued into the conversation (`raw`) goes back to its composer first, since
+the gateway dropped the queue with it. When the close frame beats that question's
+own receipt, the tab holds only the scrubbed card the queue frame made, so the
+receipt hands the text back instead: a queued receipt for a closed slot makes no
+card.
 
 ## Backend Modules
 
@@ -786,6 +800,12 @@ Module-level helper emitting `chat.side_result` frames to owner sockets only
 (`broadcast_ws_owners`), never to app sockets, matching `_check_slot_ownership`.
 Deliberately separate from `broadcast_ws` main-channel events.
 
+### `dashboard/ws.py` — `broadcast_side_closed`
+
+Emits `chat.side_closed` to owner sockets only, from `api_side_close`, whether or
+not a conversation was open: a tab can still show one the gateway lost in a
+restart.
+
 ## Frontend Modules
 
 ### `ActivityViewer.tsx`
@@ -902,9 +922,10 @@ action types stay `chat/<name>` and every consumer keeps importing them from
 
 ### `useWebSocket.ts`
 
-`case 'chat.side_result':` dispatches `sseSideResult` and
-`case 'chat.side_queue':` dispatches `sseSideQueue` — two lines alongside the
-existing subagent/tool dispatch cases.
+`case 'chat.side_result':` dispatches `sseSideResult`,
+`case 'chat.side_queue':` dispatches `sseSideQueue` and `case 'chat.side_closed':`
+dispatches `sideClose` (see Wire Protocol), alongside the existing subagent/tool
+dispatch cases.
 
 ## Security & Isolation
 

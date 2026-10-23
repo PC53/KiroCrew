@@ -5,7 +5,7 @@ import { api } from '../../api/client'
 import { sendTurn, SEND_ABORT_MS, type SendReceipt } from '../../chat-core/transport/sendTurn'
 import { sendFailureCopy, deliveryUnconfirmedCopy } from '../../chat-core/transport/receiptCopy'
 import { sideTurnWire } from './sideTurnWire'
-import { useAppSelector, useAppDispatch } from '../../store'
+import { useAppSelector, useAppDispatch, useAppStore } from '../../store'
 import { sideClose, sideOptimisticAppend, sideOptimisticRollback, restoreSideConversation, sseSideQueue, sideReleaseConsumed, sideSendStatus, queueEditBroadcastAt, stageToMainComposer, transcriptTsMs, type SideStandingNotice } from '../../store/chatSlice'
 import QueueStack from '../../components/QueueStack'
 import ChatMessageList from '../../app-sdk/ChatMessageList'
@@ -106,6 +106,7 @@ export default function SideChat({ slot, onFileOpen, onArtifactOpen }: {
 }) {
   const connected = useConnected()
   const dispatch = useAppDispatch()
+  const chatStore = useAppStore()
   // The footer describes what the backend enforces, so it asks the gateway the
   // question the side turn asks itself: the selected harness, and on claude
   // whether the installed adapter honours the read-only session options. Keyed
@@ -500,6 +501,13 @@ export default function SideChat({ slot, onFileOpen, onArtifactOpen }: {
       // cancel. An older backend omits the field, so treat absent as true and
       // keep the round-4 behaviour rather than silently dropping the card.
       const stillQueued = res.still_queued ?? true
+      // Another tab closed the conversation while this question was on its way, and
+      // the gateway dropped the queue with it. The close found no card of this
+      // question to hand back (`chat.side_closed`), so the receipt does.
+      if (res.queued && stillQueued && chatStore.getState().chat.slotSideClosed[vars.slot]) {
+        if (!vars.override) recoverFor(vars.slot, handBack(vars))
+        return
+      }
       if (res.queued && res.queue_id) {
         // Record the raw text even when the entry has already drained: a cancel
         // racing the response still needs somewhere honest to restore from.
