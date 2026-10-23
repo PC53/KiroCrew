@@ -1023,7 +1023,7 @@ export const {
   sseSubagentSnapshot, sseToolActivity, sseToolResult, sseActivityEvent,
   sseMcpAppRender,
   sseWorkflowEvent, clearWorkflowRun, reconcileWorkflowRuns,
-  sseSideResult, sseSideQueue, sideSendStatus, sideReleaseConsumed, sideClose, sideRestore, sideOptimisticAppend, sideOptimisticRollback,
+  sseSideResult, sseSideQueue, sideSendStatus, sideReleaseConsumed, sideClose, sideRestore, sideRestoreReading, sideOptimisticAppend, sideOptimisticRollback,
 } = chatSlice.actions
 
 /** The `GET /api/spawn` read in flight, shared by every gone card that asks
@@ -1071,7 +1071,17 @@ export const restoreSideConversation = createAsyncThunk<void, string, { state: R
         .finally(() => { sideRestoreReads.delete(slot) })
       sideRestoreReads.set(slot, read)
     }
-    dispatch(sideRestore({ slot, snapshot: await read }))
+    // From here an edit to a queued question this tab has no card for is kept,
+    // because the read may be answered before it.
+    dispatch(sideRestoreReading({ slot, reading: true }))
+    let snapshot: SideSnapshot
+    try {
+      snapshot = await read
+    } catch (e: unknown) {
+      dispatch(sideRestoreReading({ slot, reading: false }))
+      throw e
+    }
+    dispatch(sideRestore({ slot, snapshot }))
   },
 )
 
