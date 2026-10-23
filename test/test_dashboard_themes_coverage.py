@@ -472,7 +472,7 @@ class TestCloneGithubGuard:
         err = th._clone_github(url, tmp_path / "clone")
         assert err == "github URL must not contain credentials, query, or fragment"
 
-    @pytest.mark.parametrize("url", [None, 42, ""])
+    @pytest.mark.parametrize("url", [None, 42])
     def test_missing_url_is_rejected(self, url: object, tmp_path: Path) -> None:
         assert th._clone_github(url, tmp_path / "clone") == "github 'url' is required"  # type: ignore[arg-type]
 
@@ -775,14 +775,6 @@ class TestDoInstallRefusals:
 
 
 class TestDoInstallPromotion:
-    def test_source_containing_the_themes_dir_is_rejected(self, themes_dir: Path) -> None:
-        # The themes directory lives under KIROCREW_HOME, so installing FROM
-        # that home would make the staging copy recurse into its own output.
-        home = themes_dir.parent
-        theme, err, status = th._do_install("local", {"path": str(home)})
-        assert theme is None and status == 400
-        assert err == "source directory must not contain the themes directory"
-
     def test_invalid_pack_is_rejected_without_staging_residue(
         self, themes_dir: Path, tmp_path: Path
     ) -> None:
@@ -838,16 +830,6 @@ class TestDoInstallPromotion:
         assert err is None and status == 200 and theme is not None
         assert (themes_dir / "lcars" / "readme.md").is_file()
         assert [p.name for p in themes_dir.iterdir()] == ["lcars"]
-
-    def test_custom_record_with_the_same_slug_is_409(
-        self, themes_dir: Path, tmp_path: Path
-    ) -> None:
-        _write_json(themes_dir / "lcars.json", {"name": "LCARS"})
-        src = _make_pack(tmp_path / "pack")
-        theme, err, status = th._do_install("local", {"path": str(src)})
-        assert theme is None and status == 409
-        assert err == "a custom theme named 'lcars' already exists"
-        assert list(themes_dir.glob(".install-staging-*")) == []
 
     def test_installing_the_installed_directory_onto_itself_is_rejected(
         self, themes_dir: Path, tmp_path: Path

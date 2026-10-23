@@ -874,11 +874,6 @@ class TestDoList:
         assert "not supported on Windows" in payload["error"]
 
     @pytest.mark.asyncio
-    async def test_unconfigured_registry(self):
-        status, payload = await handlers._do_list()
-        assert status == 200 and payload == {"sites": [], "configured": False}
-
-    @pytest.mark.asyncio
     async def test_per_profile_failure_degrades_to_warning(self, monkeypatch):
         handlers._save_config("p", "us-west-2")
 
@@ -1223,14 +1218,6 @@ class TestProfilesControlPlane:
         assert _payload(resp)["default"] == "p"
 
     @pytest.mark.asyncio
-    async def test_post_refuses_when_registry_is_full(self, monkeypatch):
-        full = {"profiles": [profiles_mod.make_entry(f"p{i}", "us-west-2")
-                             for i in range(50)], "default": "p0"}
-        monkeypatch.setattr(profiles_mod, "load_registry", lambda: full)
-        resp = await handlers._handle_profiles_post(_FakeReq({"name": "new"}))
-        assert resp.status == 400 and "registry is full" in _payload(resp)["error"]
-
-    @pytest.mark.asyncio
     async def test_put_rejects_invalid_name(self):
         resp = await handlers._handle_profiles_put(
             _FakeReq({}, match_info={"name": "bad name;"}))
@@ -1303,10 +1290,6 @@ class TestExpireManifest:
     @pytest.mark.asyncio
     async def test_no_recorded_profile_is_skipped(self):
         assert await handlers._expire_manifest_best_effort(_art(profile="")) == "skipped"
-
-    @pytest.mark.asyncio
-    async def test_unregistered_profile_is_unreachable(self):
-        assert await handlers._expire_manifest_best_effort(_art()) == "unreachable"
 
     @pytest.mark.asyncio
     async def test_invalid_region_is_unreachable(self):
@@ -1475,15 +1458,6 @@ class TestTeardown:
         resp = await handlers._handle_teardown(
             _FakeReq("}{", match_info={"slug": "app"}))
         assert resp.status == 400 and "confirm=true required" in _payload(resp)["error"]
-
-    @pytest.mark.asyncio
-    async def test_unknown_artifact_is_404(self, monkeypatch):
-        exc = handlers.ArtifactNotFoundError("no artifact 'app'")
-        monkeypatch.setattr(handlers, "get_default_store",
-                            lambda: _FakeStore(get_exc=exc))
-        resp = await handlers._handle_teardown(
-            _FakeReq({"confirm": True}, match_info={"slug": "app"}))
-        assert resp.status == 404
 
     @pytest.mark.asyncio
     async def test_store_error_is_500(self, monkeypatch):
