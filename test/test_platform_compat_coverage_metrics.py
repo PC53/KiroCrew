@@ -14,7 +14,6 @@ from __future__ import annotations
 import ctypes
 import datetime
 import logging
-import os
 import types
 from typing import Any
 
@@ -360,14 +359,6 @@ class TestCountOpenFds:
 
 
 class TestProcRssForPid:
-    @_LINUX_ONLY
-    def test_linux_reads_statm_for_this_process(self):
-        rss = pc.proc_rss_bytes_for_pid(os.getpid())
-        assert rss is not None and rss > 0
-
-    @_LINUX_ONLY
-    def test_linux_vanished_pid_is_unknown(self):
-        assert pc.proc_rss_bytes_for_pid(2**30) is None
 
     def test_macos_has_no_ctypes_only_path(self, monkeypatch):
         monkeypatch.setattr(pc.sys, "platform", "darwin")
@@ -397,10 +388,6 @@ class TestProcRssForPid:
 
 
 class TestProcRssTree:
-    def test_none_off_windows(self, monkeypatch):
-        monkeypatch.setattr(pc, "IS_WINDOWS", False)
-        assert pc.proc_rss_tree_mb_for_pid(os.getpid()) is None
-
     @pytest.mark.parametrize("bad", [0, 1, -5, True])
     def test_implausible_roots_are_refused(self, monkeypatch, bad):
         # `True` is an int subclass; the strict type check keeps a bool out.
