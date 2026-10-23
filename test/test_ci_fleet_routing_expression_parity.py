@@ -358,8 +358,7 @@ def test_every_job_using_the_routing_expression_is_accounted_for() -> None:
     wrong_runner = {
         key: value
         for key, value in exception_runs_on.items()
-        if value
-        != _HOSTED_EXCEPTION_RUNNERS.get(key, _DEFAULT_HOSTED_EXCEPTION_RUNNER)
+        if value != _HOSTED_EXCEPTION_RUNNERS.get(key, _DEFAULT_HOSTED_EXCEPTION_RUNNER)
     }
     assert not wrong_runner, f"hosted exception changed runner: {wrong_runner}"
 
